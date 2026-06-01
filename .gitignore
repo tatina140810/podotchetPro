@@ -1,0 +1,20 @@
+# Корневой .gitignore (в backend/ и frontend/ есть свои дополнительные).
+.DS_Store
+*.local
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.db
+.env
+
+# Node / Vite
+node_modules/
+dist/
+.vite/
+*.tsbuildinfo
+
+# Загрузки пользователей (чеки) — не в git
+uploads/
+!uploads/.gitkeep

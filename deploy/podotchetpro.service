@@ -1,0 +1,22 @@
+[Unit]
+Description=PodotchetPRO FastAPI backend
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=exec
+WorkingDirectory=/root/PodotchetPRO/backend
+EnvironmentFile=/root/PodotchetPRO/backend/.env
+# --workers 1: ConnectionManager чата хранит WebSocket в памяти процесса;
+# с >1 воркером сообщения не доходят между процессами. Когда понадобится
+# горизонтальное масштабирование — добавить Redis pub/sub и вернуть workers >1.
+ExecStart=/root/PodotchetPRO/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --workers 1 --proxy-headers --forwarded-allow-ips="127.0.0.1"
+Restart=always
+RestartSec=5
+User=root
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=podotchetpro
+
+[Install]
+WantedBy=multi-user.target

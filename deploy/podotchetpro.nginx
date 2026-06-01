@@ -1,0 +1,82 @@
+server {
+    listen 80;
+    listen [::]:80;
+    listen [::]:443 ssl ipv6only=on; # managed by Certbot
+    listen 443 ssl; # managed by Certbot
+    server_name podotchetpro.com www.podotchetpro.com;
+
+    # Лимит на загрузку чеков (≈10MB запас на multipart-обвязку)
+    client_max_body_size 12M;
+
+    # Корень с собранным фронтом
+    root /var/www/podotchetpro;
+    index index.html;
+
+    # WebSocket для чата — должен идти до общего /api/, чтобы nginx добавил Upgrade-headers.
+    # access_log выключен: JWT передаётся в query-string и не должен попадать в логи.
+    location /api/chat/ws/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;   # длинные соединения
+        proxy_send_timeout 3600s;
+        access_log off;
+    }
+
+    # Прокси на FastAPI
+    location /api/ {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    location /health {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        access_log off;
+    }
+
+    # Загруженные чеки (статика, отдаём через nginx, минуя FastAPI)
+    location /uploads/ {
+        alias /root/PodotchetPRO/backend/uploads/;
+        autoindex off;
+        access_log off;
+    }
+
+    # Service Worker — без кеша, чтобы обновления подхватывались
+    location = /sw.js {
+        add_header Cache-Control "no-cache, no-store, must-revalidate";
+        try_files $uri =404;
+    }
+
+    location = /manifest.json {
+        add_header Cache-Control "no-cache";
+        try_files $uri =404;
+    }
+
+    # Версионированные ассеты — долгий кэш
+    location /assets/ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+        try_files $uri =404;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    ssl_certificate /etc/letsencrypt/live/podotchetpro.com/fullchain.pem; # managed by Certbot
+    ssl_certificate_key /etc/letsencrypt/live/podotchetpro.com/privkey.pem; # managed by Certbot
+    include /etc/letsencrypt/options-ssl-nginx.conf; # managed by Certbot
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem; # managed by Certbot
+}

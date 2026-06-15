@@ -114,7 +114,7 @@ export default function Requests() {
         <div className="card" style={{ overflow: "auto" }}>
           {sorted.length === 0 ? (
             <div className="empty-state">
-              <div className="icon">📋</div>
+              <div className="icon"></div>
               Заявок пока нет
             </div>
           ) : (

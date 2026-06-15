@@ -44,7 +44,7 @@ function ChainTree({ node, depth }: { node: ChainNode; depth: number }) {
   return (
     <div className="chain-node" style={{ marginLeft: depth === 0 ? 0 : 18 }}>
       <div className="chain-user-header">
-        <span className="chain-user-name">👤 {node.user_name}</span>
+        <span className="chain-user-name">{node.user_name}</span>
         <span className="chain-stats">
           <span className="muted" style={{ fontSize: 12 }}>
             потрачено по ветке: <strong>{branchSpent.toLocaleString("ru-RU")} с</strong>
@@ -78,7 +78,7 @@ function ExpenseRow({ e }: { e: ChainExpense }) {
   return (
     <div className="chain-row" style={{ opacity: muted ? 0.5 : 1 }}>
       <span className="chain-row-prefix">├──</span>
-      <span className="chain-row-icon">🧾</span>
+      <span className="chain-row-icon"></span>
       <span className="chain-row-text">
         {e.category_name || "—"}
         {e.description && <span className="muted"> · {e.description}</span>}
@@ -88,7 +88,7 @@ function ExpenseRow({ e }: { e: ChainExpense }) {
       </span>
       <span className="chain-row-meta muted">
         {new Date(e.spent_at).toLocaleDateString("ru-RU")}
-        {e.status === "pending" && " · ⏳"}
+        {e.status === "pending" && " ·"}
         {e.status === "rejected" && " · ✗ отклонён"}
       </span>
     </div>
@@ -100,7 +100,7 @@ function TransferRow({ t, depth }: { t: ChainTransfer; depth: number }) {
     <div className="chain-transfer">
       <div className="chain-row">
         <span className="chain-row-prefix">├──</span>
-        <span className="chain-row-icon">📤</span>
+        <span className="chain-row-icon"></span>
         <span className="chain-row-text">
           Передано <strong>{t.to_user_name}</strong>
           {t.note && <span className="muted"> · {t.note}</span>}

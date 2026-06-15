@@ -1283,7 +1283,7 @@ def employee_details_xlsx(
     me: User = Depends(require_director_or_auditor),
 ):
     """Excel-файл с развёрткой операций сотрудника за выбранный месяц.
-    Используется кнопкой 📊 рядом с каждым сотрудником в /reports/employees."""
+    Используется кнопкой рядом с каждым сотрудником в /reports/employees."""
     from routers.users import build_user_history_entries  # избежать циклического импорта при загрузке модуля
 
     u = db.get(User, user_id)

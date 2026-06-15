@@ -134,14 +134,14 @@ function ExpenseCard({ e, rate, onOpen }: { e: any; rate: number | null; onOpen:
       <div className="row between">
         <div>
           <div style={{ fontWeight: 600 }}>
-            🧾 {formatAmountWithEquivalent(e.amount, e.currency || "KGS", rate)}
+            {formatAmountWithEquivalent(e.amount, e.currency || "KGS", rate)}
           </div>
           <div className="muted" style={{ fontSize: 12 }}>
             {e.category_name || "—"} · {new Date(e.spent_at).toLocaleDateString("ru-RU")}
           </div>
           {e.recorded_by_name && (
             <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-              ✍️ внёс: {e.recorded_by_name} (admin)
+              внёс: {e.recorded_by_name} (admin)
             </div>
           )}
           {e.description && <div style={{ marginTop: 6, fontSize: 13 }}>{e.description}</div>}
@@ -167,7 +167,7 @@ function TransferCard({ t, rate }: { t: MoneyTransfer; rate: number | null }) {
       <div className="row between">
         <div>
           <div style={{ fontWeight: 600 }}>
-            📤 {formatAmountWithEquivalent(t.amount, "KGS", rate)} →{" "}
+            {formatAmountWithEquivalent(t.amount, "KGS", rate)} →{" "}
             <span style={{ color: "var(--accent-light)" }}>{t.to_user_name}</span>
           </div>
           <div className="muted" style={{ fontSize: 12 }}>

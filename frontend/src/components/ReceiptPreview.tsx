@@ -16,7 +16,7 @@ export function ReceiptLink({ url }: Props) {
         style={{ padding: "2px 8px", fontSize: 14 }}
         onClick={(e) => { e.stopPropagation(); setOpen(true); }}
         title="Показать чек"
-      >📎</button>
+      >Чек</button>
       {open && <ReceiptModal url={url} onClose={() => setOpen(false)} />}
     </>
   );
@@ -38,11 +38,10 @@ function ReceiptModal({ url, onClose }: { url: string; onClose: () => void }) {
     }}>
       <button onClick={onClose} className="ghost" style={{
         position: "absolute", top: 12, right: 12, fontSize: 18, padding: "6px 12px",
-      }}>✕</button>
+      }}>×</button>
       <div onClick={(e) => e.stopPropagation()} style={{ maxWidth: "95vw", maxHeight: "90vh" }}>
         {isPdf ? (
           <div className="card" style={{ textAlign: "center" }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>📄</div>
             <div style={{ marginBottom: 16 }}>PDF-документ</div>
             <a href={url} target="_blank" rel="noreferrer">
               <button>Открыть в новой вкладке</button>

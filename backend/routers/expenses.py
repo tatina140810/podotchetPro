@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from auth import (
     get_current_user,
     is_director_level,
+    is_director_or_auditor,
     require_auditor,
     require_director_level,
 )
@@ -200,10 +201,10 @@ def create_expense(
     # (admin сам утверждает в момент ввода — повторного review не нужно).
     on_behalf: Optional[User] = None
     if payload.on_behalf_of_user_id is not None:
-        if me.role not in ("admin", "superadmin"):
+        if not is_director_or_auditor(me):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
-                "Вносить от лица другого может только admin",
+                "Вносить от лица другого может только auditor и выше",
             )
         on_behalf = db.get(User, payload.on_behalf_of_user_id)
         if not on_behalf or on_behalf.org_id != me.org_id:
@@ -225,10 +226,16 @@ def create_expense(
         if not cat or cat.org_id != me.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Категория не найдена")
 
-    # Подразделение — обязательно для новых расходов.
-    if payload.department_id is None:
+    # Подразделение — обязательно. При вводе «от лица» (on_behalf, из профиля сотрудника)
+    # можно не указывать: подставим единственное подразделение этого сотрудника.
+    department_id = payload.department_id
+    if department_id is None and on_behalf is not None:
+        dep_ids = [d.id for d in on_behalf.departments]
+        if len(dep_ids) == 1:
+            department_id = dep_ids[0]
+    if department_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
-    dep = db.get(Department, payload.department_id)
+    dep = db.get(Department, department_id)
     if not dep or dep.org_id != me.org_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
     # accountable может вносить расход только в свои подразделения.
@@ -237,7 +244,7 @@ def create_expense(
             db.query(EmployeeDepartment.id)
             .filter(
                 EmployeeDepartment.employee_id == me.id,
-                EmployeeDepartment.department_id == payload.department_id,
+                EmployeeDepartment.department_id == department_id,
             )
             .first()
         )
@@ -303,7 +310,7 @@ def create_expense(
         employee_id=employee_id,
         advance_id=payload.advance_id,
         category_id=payload.category_id,
-        department_id=payload.department_id,
+        department_id=department_id,
         amount=payload.amount,
         currency=payload.currency,
         amount_kgs=amount_kgs,
@@ -340,7 +347,7 @@ def create_expense(
             amount_kgs=amount_kgs,
             note=f"Из расхода: {payload.description or 'без описания'}",
             date=payload.spent_at or datetime.utcnow(),
-            department_id=payload.department_id,
+            department_id=department_id,
         ))
 
     db.commit()
@@ -371,7 +378,7 @@ def update_expense(
     e = db.get(Expense, expense_id)
     if not e or e.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
-    if not is_director_level(me) and (e.employee_id != me.id or e.status != "pending"):
+    if not is_director_or_auditor(me) and (e.employee_id != me.id or e.status != "pending"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Менять можно только свои pending-расходы")
 
     data = payload.model_dump(exclude_unset=True)
@@ -439,7 +446,7 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), me: User = De
     e = db.get(Expense, expense_id)
     if not e or e.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
-    if not is_director_level(me) and (e.employee_id != me.id or e.status != "pending"):
+    if not is_director_or_auditor(me) and (e.employee_id != me.id or e.status != "pending"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Удалять можно только свои pending-расходы")
     db.delete(e)
     db.commit()

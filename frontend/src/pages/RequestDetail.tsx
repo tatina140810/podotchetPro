@@ -136,7 +136,7 @@ export default function RequestDetail() {
               fontSize: 12,
             }}
           >
-            {req.is_expense_on_approve ? "📋 Заявка на расход" : "💰 Выдача под отчёт"}
+            {req.is_expense_on_approve ? "Заявка на расход" : "Выдача под отчёт"}
           </span>
         </div>
         <div className="row between">
@@ -176,7 +176,7 @@ export default function RequestDetail() {
       {req.status === "approved" && req.is_expense_on_approve && (
         <div className="card" style={{ marginTop: 12, borderLeft: "4px solid var(--success)" }}>
           <div style={{ fontWeight: 600, marginBottom: 6 }}>
-            ✅ Одобрено. Расход создан автоматически.
+            Одобрено. Расход создан автоматически.
           </div>
           <div className="row between" style={{ fontSize: 13 }}>
             <span className="muted">Категория</span>

@@ -87,7 +87,7 @@ export default function NewAdvance() {
 
         {warnings && (
           <div className="card" style={{ borderColor: "var(--warning)", background: "rgba(253,203,110,0.1)" }}>
-            <div style={{ fontWeight: 600, marginBottom: 8 }}>⚠ Превышение лимитов:</div>
+            <div style={{ fontWeight: 600, marginBottom: 8 }}>Превышение лимитов:</div>
             {warnings.map((w, i) => <div key={i}>• {w}</div>)}
             <button type="button" className="danger" style={{ marginTop: 12 }}
                     onClick={(e) => submit(e as any, true)} disabled={busy}>

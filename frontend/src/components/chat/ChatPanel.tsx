@@ -73,7 +73,7 @@ export function ChatPanel({ room, onBack }: Props) {
       <div className="chat-messages" ref={listRef}>
         {messages.length === 0 && (
           <div className="empty-state">
-            <div className="icon">💬</div>
+            <div className="icon"></div>
             Сообщений пока нет
           </div>
         )}

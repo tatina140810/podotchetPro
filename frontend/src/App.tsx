@@ -26,6 +26,7 @@ import Categories from "./pages/Categories";
 import Departments from "./pages/Departments";
 import CategoryReport from "./pages/CategoryReport";
 import EmployeesReport from "./pages/EmployeesReport";
+import EmployeeProfile from "./pages/EmployeeProfile";
 import BalanceReport from "./pages/BalanceReport";
 import IncomeReport from "./pages/IncomeReport";
 import IssuedTopups from "./pages/IssuedTopups";
@@ -111,6 +112,7 @@ function RoleRoutes() {
         <Route path="/reports" element={<Navigate to="/" replace />} />
         <Route path="/reports/categories" element={<Navigate to="/" replace />} />
         <Route path="/reports/employees" element={<EmployeesReport />} />
+        <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
         <Route path="/reports/balance" element={<BalanceReport />} />
         <Route path="/reports/incomes" element={<IncomeReport />} />
         <Route path="/issued-topups" element={<IssuedTopups />} />
@@ -129,6 +131,7 @@ function RoleRoutes() {
       <Route path="/" element={<MyDashboard />} />
       <Route path="/my-expenses" element={<MyExpenses />} />
       <Route path="/my-history" element={<MyHistory />} />
+      <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
       <Route path="/expenses/new" element={<NewExpense />} />
       <Route path="/my-subordinates" element={<MySubordinates />} />
       <Route path="/employees/:id/chain" element={<EmployeeChain />} />
@@ -149,7 +152,7 @@ function NotFound() {
   );
 }
 
-/** Кнопка «⚙ курс» в шапке — открывает RateModal. Только admin. */
+/** Кнопка «курс» в шапке — открывает RateModal. Только admin. */
 function RateButtonInHeader() {
   const [open, setOpen] = useState(false);
   return (
@@ -160,7 +163,7 @@ function RateButtonInHeader() {
         style={{ padding: "4px 10px", fontSize: 13 }}
         onClick={() => setOpen(true)}
         title="Курсы валют"
-      >⚙ курс</button>
+      >курс</button>
       {open && (
         <RateModal
           onClose={() => setOpen(false)}

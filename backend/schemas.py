@@ -505,6 +505,8 @@ class MoneyRequestUpdate(BaseModel):
     currency: Optional[str] = Field(default=None, max_length=8)
     is_expense_on_approve: Optional[bool] = None
     expense_category_id: Optional[int] = None
+    # Комментарий — править может auditor+ на любой заявке (inline-edit в профиле).
+    comment: Optional[str] = Field(default=None, max_length=2000)
 
 
 class MoneyRequestReject(BaseModel):
@@ -570,6 +572,9 @@ class BalanceTopUpCreate(BaseModel):
     category_id: Optional[int] = None
     # Подразделение — обязательно для новых пополнений (проверяется в роутере).
     department_id: Optional[int] = None
+    # «Кто выдал» — для добавления «передал дальше» от лица сотрудника (admin_id=issued_by).
+    # Если не указан — текущий пользователь. Только auditor+ (проверка в роутере).
+    issued_by_id: Optional[int] = None
 
 
 class BalanceTopUpOut(BaseModel):

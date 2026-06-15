@@ -13,6 +13,7 @@ from routers import (
     advances,
     categories,
     departments,
+    employees,
     chat,
     dashboard,
     exchange_rates,
@@ -61,6 +62,7 @@ app.include_router(users.router)
 app.include_router(specs.router)
 app.include_router(categories.router)
 app.include_router(departments.router)
+app.include_router(employees.router)
 app.include_router(advances.router)
 app.include_router(expenses.router)
 app.include_router(reports.router)

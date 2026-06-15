@@ -258,9 +258,22 @@ def update_request(
     req = db.get(MoneyRequest, request_id)
     if not req or req.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
-    _check_request_ownership(req, me, "редактировать")
-    if req.status != "draft":
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Редактировать можно только draft")
+
+    # auditor+ может править ТОЛЬКО комментарий любой заявки (inline-edit в профиле).
+    # Статус/сумму/категорию через этот путь не меняем (B: вариант 1).
+    if is_director_or_auditor(me) and payload.comment is not None:
+        req.comment = payload.comment
+
+    # Полное редактирование полей — только заявитель и только draft.
+    full_fields = (
+        payload.title is not None or payload.approver_id is not None
+        or payload.currency is not None or payload.is_expense_on_approve is not None
+        or payload.expense_category_id is not None
+    )
+    if full_fields:
+        _check_request_ownership(req, me, "редактировать")
+        if req.status != "draft":
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Редактировать можно только draft")
 
     if payload.title is not None:
         req.title = payload.title
@@ -562,12 +575,15 @@ def delete_request(
     req = db.get(MoneyRequest, request_id)
     if not req or req.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
-    _check_request_ownership(req, me, "удалить")
-    if req.status not in ("draft", "rejected"):
-        raise HTTPException(
-            status.HTTP_400_BAD_REQUEST,
-            "Удалять можно только draft или rejected (одобренные — финансовый след)",
-        )
+    # auditor+ может удалить любую заявку (inline-edit в профиле). Связанный Expense
+    # сохраняется: expenses.source_request_id = SET NULL при удалении заявки.
+    if not is_director_or_auditor(me):
+        _check_request_ownership(req, me, "удалить")
+        if req.status not in ("draft", "rejected"):
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                "Удалять можно только draft или rejected (одобренные — финансовый след)",
+            )
     db.delete(req)
     db.commit()
     return None

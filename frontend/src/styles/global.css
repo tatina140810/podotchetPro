@@ -903,3 +903,8 @@ tr.pending-row { background: rgba(253,203,110,0.05); }
 @media (min-width: 721px) {
   .chat-back { display: none; }
 }
+
+/* Inline-редактирование в профиле сотрудника: иконки действий по hover */
+.prow .prow-actions { visibility: hidden; }
+.prow:hover .prow-actions { visibility: visible; }
+@media (hover: none) { .prow .prow-actions { visibility: visible; } }

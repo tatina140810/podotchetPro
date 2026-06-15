@@ -382,10 +382,10 @@ function SummarySection({ data, loading, currency }: { data: SummaryResp | null;
 
   const sym = CURRENCY_SYMBOL[currency] || currency;
   const cards = [
-    { icon: "💰", label: "Выдано всего", val: data.issued_total },
-    { icon: "🧾", label: "Потрачено всего", val: data.spent_total },
-    { icon: "💵", label: "Остаток", val: data.balance, accent: true },
-    { icon: "⏳", label: "На проверке", val: data.pending_total, warn: true },
+    { icon: "", label: "Выдано всего", val: data.issued_total },
+    { icon: "", label: "Потрачено всего", val: data.spent_total },
+    { icon: "", label: "Остаток", val: data.balance, accent: true },
+    { icon: "", label: "На проверке", val: data.pending_total, warn: true },
   ];
 
   return (
@@ -510,7 +510,7 @@ function DetailsTable({ rows, compact }: { rows: ExpenseDetail[]; compact?: bool
               <td><span className={`badge ${e.status}`}>{e.status}</span></td>
               <td>
                 {e.receipt_url
-                  ? <a href={e.receipt_url} target="_blank" rel="noreferrer" title="Открыть чек">📎</a>
+                  ? <a href={e.receipt_url} target="_blank" rel="noreferrer" title="Открыть чек"></a>
                   : <span className="muted">—</span>}
               </td>
             </tr>
@@ -670,7 +670,7 @@ function SkeletonRows() {
 function EmptyState({ text, inline }: { text: string; inline?: boolean }) {
   const inner = (
     <div className="empty-state">
-      <div className="icon">📭</div>
+      <div className="icon"></div>
       <div>{text}</div>
     </div>
   );

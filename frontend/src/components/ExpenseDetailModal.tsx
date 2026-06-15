@@ -79,8 +79,8 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
         maxWidth: 760, width: "100%", maxHeight: "92vh", overflow: "auto",
       }}>
         <div className="row between" style={{ marginBottom: 12 }}>
-          <h2 className="h2" style={{ margin: 0 }}>🧾 Расход</h2>
-          <button type="button" className="ghost" onClick={onClose} style={{ padding: "4px 10px" }}>✕</button>
+          <h2 className="h2" style={{ margin: 0 }}>Расход</h2>
+          <button type="button" className="ghost" onClick={onClose} style={{ padding: "4px 10px" }}>×</button>
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: hasReceipts ? "1fr 1fr" : "1fr", gap: 16 }}>
@@ -125,11 +125,11 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
             )}
             {expense.recorded_by_name && (
               <div className="muted" style={{ fontSize: 12 }}>
-                ✍️ Внёс: {expense.recorded_by_name}
+                Внёс: {expense.recorded_by_name}
               </div>
             )}
             {!hasReceipts && (
-              <div className="muted" style={{ fontSize: 13 }}>📎 Чеки не прикреплены</div>
+              <div className="muted" style={{ fontSize: 13 }}>Чеки не прикреплены</div>
             )}
             {canAttach && (
               <div>
@@ -137,7 +137,7 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
                   className="ghost"
                   style={{ display: "inline-block", cursor: uploading ? "default" : "pointer", padding: "8px 12px", borderRadius: 8 }}
                 >
-                  {uploading ? "Загрузка…" : "📎 Прикрепить чек"}
+                  {uploading ? "Загрузка…" : "Прикрепить чек"}
                   <input
                     type="file"
                     accept="image/*,application/pdf"
@@ -159,7 +159,7 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
         <div className="row" style={{ justifyContent: "flex-end", marginTop: 16, gap: 8 }}>
           <button type="button" className="ghost" onClick={onClose}>Закрыть</button>
           {canEdit && (
-            <button type="button" onClick={onEdit}>✏️ Редактировать</button>
+            <button type="button" onClick={onEdit}>Редактировать</button>
           )}
         </div>
       </div>
@@ -191,12 +191,12 @@ function ReceiptThumb({ receipt, canDelete, onDelete }: { receipt: Receipt; canD
           onClick={onDelete}
           title="Удалить чек"
           style={{ position: "absolute", top: 4, right: 4, padding: "2px 8px", zIndex: 1, background: "rgba(0,0,0,0.5)" }}
-        >✕</button>
+        >×</button>
       )}
       <a href={url} target="_blank" rel="noreferrer" title="Открыть в полном размере" style={{ display: "block" }}>
         {isPdf ? (
           <div style={{ textAlign: "center", padding: "16px 8px" }}>
-            <div style={{ fontSize: 40 }}>📄</div>
+            <div style={{ fontSize: 40 }}></div>
             <div style={{ fontSize: 12 }}>{receipt.file_name || "PDF-документ"}</div>
           </div>
         ) : (

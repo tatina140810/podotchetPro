@@ -10,6 +10,7 @@ from auth import (
     is_director_or_auditor,
     require_admin,
     require_director_level,
+    require_director_or_auditor,
 )
 from database import get_db
 from models import BalanceTopUp, Category, Department, Expense, MoneyTransfer, Notification, User
@@ -188,9 +189,9 @@ def topup_user(
     payload: BalanceTopUpCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_director_level),
+    admin: User = Depends(require_director_or_auditor),
 ):
-    """Внести деньги 'из казны' на баланс пользователя. admin или gen_director."""
+    """Внести деньги 'из казны' на баланс пользователя. auditor и выше."""
     target = db.get(User, user_id)
     if not target or target.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
@@ -199,6 +200,15 @@ def topup_user(
         dep = db.get(Department, payload.department_id)
         if not dep or dep.org_id != admin.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+
+    # «Кто выдал»: по умолчанию текущий пользователь; для «передал дальше» из профиля
+    # можно указать сотрудника-отправителя (issued_by_id). Проверяем org.
+    issuer_id = admin.id
+    if payload.issued_by_id is not None:
+        issuer = db.get(User, payload.issued_by_id)
+        if not issuer or issuer.org_id != admin.org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "«Кто выдал» не найден")
+        issuer_id = issuer.id
 
     from datetime import datetime as _dt
     from decimal import Decimal as _D
@@ -217,7 +227,7 @@ def topup_user(
 
     t = BalanceTopUp(
         org_id=admin.org_id,
-        admin_id=admin.id,
+        admin_id=issuer_id,
         user_id=target.id,
         amount=payload.amount,
         currency=payload.currency,
@@ -285,9 +295,9 @@ def update_topup(
     topup_id: int,
     payload: BalanceTopUpUpdate,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_director_or_auditor),
 ):
-    """Изменить запись выдачи — только admin. TopUp всегда в KGS, валюту не трогаем."""
+    """Изменить запись выдачи — auditor и выше (admin/superadmin/gen_director)."""
     t = db.get(BalanceTopUp, topup_id)
     if not t or t.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Выдача не найдена")
@@ -328,9 +338,9 @@ def update_topup(
 def delete_topup(
     topup_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_director_or_auditor),
 ):
-    """Удалить запись выдачи — только admin. Сразу влияет на баланс получателя."""
+    """Удалить запись выдачи — auditor и выше. Сразу влияет на баланс получателя."""
     t = db.get(BalanceTopUp, topup_id)
     if not t or t.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Выдача не найдена")

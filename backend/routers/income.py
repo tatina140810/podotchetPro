@@ -97,9 +97,9 @@ def list_incomes(
 def delete_income(
     income_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_director_or_auditor),
 ):
-    """Удалить — только admin."""
+    """Удалить — auditor и выше (admin/superadmin/gen_director)."""
     inc = db.get(Income, income_id)
     if not inc or inc.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
@@ -113,7 +113,7 @@ def update_income(
     income_id: int,
     payload: IncomeUpdate,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_director_or_auditor),
 ):
     """Изменить запись прихода — только admin.
     При изменении amount/currency пересчитываем amount_kgs по ТЕКУЩЕМУ курсу.

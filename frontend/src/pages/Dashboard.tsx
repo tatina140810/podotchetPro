@@ -81,7 +81,7 @@ export default function Dashboard() {
               </div>
             )}
           </div>
-          {/* Кнопки «+ Приход» и «⚙ курс» перенесены: Приход — в раздел /expenses,
+          {/* Кнопки «+ Приход» и «курс» перенесены: Приход — в раздел /expenses,
               курс — в шапку сайта рядом с тумблером валюты. */}
         </div>
       </div>
@@ -293,12 +293,12 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
             )}
             {needsRateButMissing && (
               <div style={{ fontSize: 12, color: "var(--danger)", marginTop: 4 }}>
-                Курс {form.currency}/KGS не задан. Нажмите «⚙️ курс» → «Загрузить с НБКР» (USD+RUB одной кнопкой).
+                Курс {form.currency}/KGS не задан. Нажмите «курс» → «Загрузить с НБКР» (USD+RUB одной кнопкой).
               </div>
             )}
             {form.received_by_id && (
               <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
-                💡 Запись будет помечена: внёс «{me?.name || "admin"}» от лица получателя.
+                Запись будет помечена: внёс «{me?.name || "admin"}» от лица получателя.
               </div>
             )}
           </div>
@@ -458,7 +458,7 @@ export function RateModal({
           disabled={pullingNbkr || busy}
           style={{ width: "100%", marginBottom: 10 }}
         >
-          {pullingNbkr ? "Загружаю с НБКР..." : "🇰🇬 Подгрузить USD + RUB + EUR с НБКР"}
+          {pullingNbkr ? "Загружаю с НБКР..." : "Подгрузить USD + RUB + EUR с НБКР"}
         </button>
 
         <div className="muted" style={{ fontSize: 11, textAlign: "center", margin: "0 0 8px" }}>

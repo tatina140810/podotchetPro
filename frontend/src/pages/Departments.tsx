@@ -59,7 +59,7 @@ export default function Departments() {
               <div className="row" style={{ gap: 12 }}>
                 <span style={{ fontWeight: 600 }}>{d.name}</span>
                 <span className="muted" style={{ fontSize: 12 }}>
-                  👥 {d.employee_count} · 🏷 {d.category_count}
+                  {d.employee_count} · {d.category_count}
                 </span>
               </div>
               <button

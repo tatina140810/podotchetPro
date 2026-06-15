@@ -29,40 +29,40 @@ function describe(n: NotificationItem): Describe {
   switch (n.type) {
     case "request_submitted":
       return {
-        icon: "📋",
+        icon: "",
         title: `Новая заявка${title ? ": " + title : ""}`,
         subtitle: amount ? `Сумма: ${amount} с` : undefined,
         href: reqId ? `/requests/${reqId}` : undefined,
       };
     case "request_approved":
       return {
-        icon: "✅",
+        icon: "",
         title: `Заявка одобрена${title ? ": " + title : ""}`,
         subtitle: amount ? `Зачислено: ${amount} с` : undefined,
         href: reqId ? `/requests/${reqId}` : undefined,
       };
     case "request_rejected":
       return {
-        icon: "❌",
+        icon: "",
         title: `Заявка отклонена${title ? ": " + title : ""}`,
         subtitle: comment || undefined,
         href: reqId ? `/requests/${reqId}` : undefined,
       };
     case "transfer_received":
       return {
-        icon: "💸",
+        icon: "",
         title: `Вам передали${amount ? ` ${amount} с` : " деньги"}`,
         subtitle: note || undefined,
         href: "/transfers",
       };
     case "balance_topup":
       return {
-        icon: "💼",
+        icon: "",
         title: `Пополнен баланс${amount ? `: +${amount} с` : ""}`,
         subtitle: note || undefined,
       };
     default:
-      return { icon: "🔔", title: n.type };
+      return { icon: "", title: n.type };
   }
 }
 
@@ -157,7 +157,7 @@ export function NotificationBell() {
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
       >
-        <span className="notif-icon">🔔</span>
+        <span className="notif-icon">Увед.</span>
         {count > 0 && (
           <span className="notif-badge">{count > 99 ? "99+" : count}</span>
         )}
@@ -213,7 +213,7 @@ export function NotificationBell() {
             <div className="notif-footer">
               {push.status === "on" && (
                 <>
-                  <span>📲 Push на это устройство <strong>включены</strong></span>
+                  <span>Push на это устройство <strong>включены</strong></span>
                   <button type="button" className="ghost notif-footer-btn" onClick={() => push.disable()}>
                     Выключить
                   </button>
@@ -221,18 +221,18 @@ export function NotificationBell() {
               )}
               {(push.status === "off" || push.status === "error") && (
                 <>
-                  <span>📲 Push на это устройство выключены</span>
+                  <span>Push на это устройство выключены</span>
                   <button type="button" className="notif-footer-btn" onClick={() => push.enable()}>
                     Включить
                   </button>
                 </>
               )}
               {push.status === "denied" && (
-                <span className="muted">🚫 Push запрещены в настройках браузера</span>
+                <span className="muted">Push запрещены в настройках браузера</span>
               )}
               {push.status === "ios-not-pwa" && (
                 <>
-                  <span>🍎 Чтобы включить push на iPhone</span>
+                  <span>Чтобы включить push на iPhone</span>
                   <button type="button" className="ghost notif-footer-btn" onClick={() => setShowIosHelp(true)}>
                     Как?
                   </button>
@@ -257,7 +257,7 @@ export function NotificationBell() {
               <li>Прокрутите вниз → <strong>«На экран „Домой"»</strong></li>
               <li>Нажмите <strong>«Добавить»</strong></li>
               <li>Закройте Safari, откройте PodotchetPRO с новой иконки</li>
-              <li>Откройте 🔔 → «Включить»</li>
+              <li>Откройте → «Включить»</li>
             </ol>
             <div className="muted" style={{ fontSize: 12, marginTop: 12 }}>
               Требуется iPhone с iOS 16.4 или новее.

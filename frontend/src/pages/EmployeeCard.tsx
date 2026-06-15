@@ -231,7 +231,7 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
                 <input type="checkbox" style={{ width: "auto" }}
                        checked={form.is_confidential}
                        onChange={(e) => setForm({ ...form, is_confidential: e.target.checked })} />
-                <span>🔒 Конфиденциальный сотрудник</span>
+                <span>Конфиденциальный сотрудник</span>
               </label>
               {form.is_confidential && (
                 <div style={{

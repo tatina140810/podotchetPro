@@ -44,9 +44,9 @@ const TYPE_LABEL: Record<Op, string> = {
 };
 
 const TYPE_ICON: Record<Op, string> = {
-  expense: "🧾",
-  income: "💰",
-  topup: "💼",
+  expense: "",
+  income: "",
+  topup: "",
 };
 
 function makeEmptyRow(): Row {
@@ -233,9 +233,9 @@ export default function BulkImport() {
                     onChange={(e) => updateRow(idx, { type: e.target.value as Op })}
                     onKeyDown={(e) => onKeyDown(e, idx)}
                   >
-                    <option value="expense">🧾 Расход</option>
-                    <option value="income">💰 Приход</option>
-                    <option value="topup">💼 Выдача</option>
+                    <option value="expense">Расход</option>
+                    <option value="income">Приход</option>
+                    <option value="topup">Выдача</option>
                   </select>
                 </td>
                 <td>
@@ -354,7 +354,7 @@ export default function BulkImport() {
                     type="button" className="ghost" onClick={() => removeRow(idx)}
                     style={{ padding: "4px 8px", fontSize: 14 }}
                     title="Удалить строку"
-                  >🗑</button>
+                  >×</button>
                 </td>
               </tr>
             ))}
@@ -369,7 +369,7 @@ export default function BulkImport() {
         <div className="muted" style={{ fontSize: 13 }}>
           Валидных строк: <strong>{summary.validCount}</strong>
           {" · "}
-          🧾 {summary.counts.expense} · 💰 {summary.counts.income} · 💼 {summary.counts.topup}
+          {summary.counts.expense} · {summary.counts.income} · {summary.counts.topup}
           {" · "}
           сумма (KGS): <strong>{summary.total.toLocaleString("ru-RU")}</strong>
         </div>
@@ -393,9 +393,9 @@ export default function BulkImport() {
             <div style={{ marginBottom: 12 }}>
               Будет создано:
               <ul style={{ marginTop: 6, paddingLeft: 20 }}>
-                <li>🧾 расходов: <strong>{summary.counts.expense}</strong></li>
-                <li>💰 приходов: <strong>{summary.counts.income}</strong></li>
-                <li>💼 выдач: <strong>{summary.counts.topup}</strong></li>
+                <li>расходов: <strong>{summary.counts.expense}</strong></li>
+                <li>приходов: <strong>{summary.counts.income}</strong></li>
+                <li>выдач: <strong>{summary.counts.topup}</strong></li>
               </ul>
               На сумму (KGS): <strong>{summary.total.toLocaleString("ru-RU")} сом</strong>
               <div className="muted" style={{ fontSize: 12, marginTop: 8 }}>
@@ -417,7 +417,7 @@ export default function BulkImport() {
       {result && (
         <div className="card" style={{ marginTop: 16 }}>
           <h2 className="h2">Результат</h2>
-          <div style={{ color: "var(--success)" }}>✅ Создано: {result.created}</div>
+          <div style={{ color: "var(--success)" }}>Создано: {result.created}</div>
           {result.errors.length > 0 && (
             <>
               <div style={{ marginTop: 10, color: "var(--danger)" }}>
@@ -512,7 +512,7 @@ function DuplicatesButton() {
   return (
     <>
       <button type="button" className="ghost" onClick={find} disabled={loading}>
-        {loading ? "..." : "🔍 Найти дубли"}
+        {loading ? "..." : "Найти дубли"}
       </button>
       {open && (
         <div onClick={() => setOpen(false)} style={{
@@ -640,10 +640,10 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
   useEffect(() => { setPage(0); }, [employeeId, categoryId, departmentId, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
 
   const KIND_LABEL: Record<string, string> = {
-    expense: "🧾 Расход",
-    income: "💰 Приход",
-    topup: "💼 Выдача",
-    request: "📋 Заявка",
+    expense: "Расход",
+    income: "Приход",
+    topup: "Выдача",
+    request: "Заявка",
   };
 
   async function onDelete(o: RecentOp) {
@@ -840,14 +840,14 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
                           style={{ padding: "4px 8px", fontSize: 12 }}
                           onClick={() => setEditing(o)}
                           title="Редактировать"
-                        >✏️</button>
+                        >Изм.</button>
                       )}
                       <button
                         className="danger"
                         style={{ padding: "4px 8px", fontSize: 12 }}
                         onClick={() => onDelete(o)}
                         title="Удалить"
-                      >🗑</button>
+                      >Удал.</button>
                     </div>
                   </td>
                 </tr>

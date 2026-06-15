@@ -130,7 +130,7 @@ export default function Transfers() {
       <div className="card" style={{ overflow: "auto" }}>
         {transfers.length === 0 ? (
           <div className="empty-state">
-            <div className="icon">💸</div>
+            <div className="icon"></div>
             Передач пока не было
           </div>
         ) : (

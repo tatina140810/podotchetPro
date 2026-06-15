@@ -55,7 +55,7 @@ export default function IssuedTopups() {
       <div className="card" style={{ overflow: "auto" }}>
         {items.length === 0 ? (
           <div className="empty-state">
-            <div className="icon">💼</div>
+            <div className="icon"></div>
             Выдач пока не было
           </div>
         ) : (
@@ -93,9 +93,9 @@ export default function IssuedTopups() {
                     <td>
                       <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
                         <button className="ghost" style={{ padding: "4px 8px", fontSize: 13 }}
-                                onClick={() => setEditing(t)} title="Изменить">✏️</button>
+                                onClick={() => setEditing(t)} title="Изменить">Изм.</button>
                         <button className="danger" style={{ padding: "4px 8px", fontSize: 13 }}
-                                onClick={() => onDelete(t)} title="Удалить">🗑</button>
+                                onClick={() => onDelete(t)} title="Удалить">Удал.</button>
                       </div>
                     </td>
                   )}

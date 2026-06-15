@@ -171,7 +171,7 @@ export default function Categories() {
         {orphans.length > 0 && (
           <div className="card" style={{ padding: 14, borderColor: "var(--danger)" }}>
             <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
-              ⚠ Подкатегории без родителя (родитель удалён):
+              Подкатегории без родителя (родитель удалён):
             </div>
             <div className="grid" style={{ gap: 6 }}>
               {orphans.map((c) => (
@@ -238,7 +238,7 @@ export default function Categories() {
               </div>
               <div>
                 <label>Иконка (эмодзи или название, необязательно)</label>
-                <input value={editing.icon || ""} onChange={(e) => setEditing({ ...editing, icon: e.target.value })} placeholder="🚗" />
+                <input value={editing.icon || ""} onChange={(e) => setEditing({ ...editing, icon: e.target.value })} placeholder="" />
               </div>
               <div>
                 <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer" }}>

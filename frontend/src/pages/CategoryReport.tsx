@@ -187,7 +187,7 @@ export default function CategoryReport() {
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={onExport} disabled={exporting || !data}
             style={{ background: "#107C41", color: "#fff" }}>
-            {exporting ? "..." : "📊 Excel"}
+            {exporting ? "..." : "Excel"}
           </button>
         </div>
       </div>
@@ -243,7 +243,7 @@ export default function CategoryReport() {
               <span>Результат периода:</span>
               <span style={{ color: data.result >= 0 ? "var(--success)" : "var(--danger)" }}>
                 {data.result >= 0 ? "+" : ""}{data.result.toLocaleString("ru-RU")} {sym}
-                {data.result >= 0 ? " ✅" : " ⚠️"}
+                {data.result >= 0 ? "" : ""}
               </span>
             </div>
           </div>

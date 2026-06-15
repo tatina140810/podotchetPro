@@ -62,7 +62,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
       padding: "5vh 16px", overflowY: "auto",
     }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
-        <h2 className="h2">✏️ Изменить выдачу</h2>
+        <h2 className="h2">Изменить выдачу</h2>
         <form onSubmit={submit} className="grid">
           <div className="row" style={{ gap: 8 }}>
             <div style={{ flex: 2 }}>

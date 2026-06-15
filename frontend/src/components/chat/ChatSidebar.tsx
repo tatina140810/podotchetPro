@@ -112,7 +112,7 @@ export function ChatSidebar({ rooms, activeRoomId, onSelect, onRoomsChange }: Pr
             onClick={() => setShowNewDirect(true)}
             aria-label="Новый личный чат"
           >
-            ✉
+           
           </button>
         </div>
         {directs.length === 0 && <div className="muted chat-empty-list">Нет личных чатов</div>}

@@ -29,12 +29,12 @@ settings = get_settings()
 # ===================== Шаблоны payload =====================
 
 _ICONS = {
-    "chat_message": "💬",
-    "request_submitted": "📋",
-    "request_approved": "✅",
-    "request_rejected": "❌",
-    "transfer_received": "💸",
-    "balance_topup": "💼",
+    "chat_message": "",
+    "request_submitted": "",
+    "request_approved": "",
+    "request_rejected": "",
+    "transfer_received": "",
+    "balance_topup": "",
 }
 
 
@@ -43,7 +43,7 @@ def build_payload(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
     Эмодзи в title — единственный «иконочный» элемент, надёжный кросс-платформенно
     (iOS не показывает icon из manifest для веб-push)."""
 
-    icon = _ICONS.get(event_type, "🔔")
+    icon = _ICONS.get(event_type, "")
 
     if event_type == "chat_message":
         sender = str(data.get("sender_name") or "Сообщение")
@@ -77,7 +77,7 @@ def build_payload(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
             body += f"\n{data['note']}"
         url = "/"
     else:
-        title = f"🔔 {event_type}"
+        title = f"{event_type}"
         body = ""
         url = "/"
 

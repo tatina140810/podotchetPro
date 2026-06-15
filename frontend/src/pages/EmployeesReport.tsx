@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
@@ -62,14 +63,14 @@ export default function EmployeesReport() {
   }
 
   const KIND_RU: Record<string, string> = {
-    topup: "💼 Выдача (получил)",
-    topup_out: "💼 Выдача (отдал)",
-    income: "💰 Приход",
+    topup: "Выдача (получил)",
+    topup_out: "Выдача (отдал)",
+    income: "Приход",
     transfer_in: "↙ Получил перевод",
     transfer_out: "↗ Передал",
-    request_approved: "✅ Заявка (получено)",
-    request_approved_out: "✅ Заявка (выдал)",
-    expense: "🧾 Расход",
+    request_approved: "Заявка (получено)",
+    request_approved_out: "Заявка (выдал)",
+    expense: "Расход",
   };
 
   function reload() {
@@ -127,7 +128,7 @@ export default function EmployeesReport() {
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={onExport} disabled={exporting || !data}
             style={{ background: "#107C41", color: "#fff" }}>
-            {exporting ? "..." : "📊 Excel"}
+            {exporting ? "..." : "Excel"}
           </button>
         </div>
       </div>
@@ -187,7 +188,13 @@ export default function EmployeesReport() {
                   <tr onClick={() => toggle(r.user_id)} style={{ cursor: "pointer" }}>
                     <td>
                       <span style={{ marginRight: 6 }}>{expanded.has(r.user_id) ? "▼" : "▶"}</span>
-                      {r.name}
+                      <Link
+                        to={`/reports/employees/${r.user_id}?month=${month}&year=${year}`}
+                        onClick={(e) => e.stopPropagation()}
+                        title="Открыть профиль сотрудника"
+                      >
+                        {r.name}
+                      </Link>
                       <button
                         type="button"
                         className="ghost"
@@ -196,7 +203,7 @@ export default function EmployeesReport() {
                         title="Скачать Excel с развёрткой операций за выбранный месяц"
                         style={{ marginLeft: 8, padding: "2px 8px", fontSize: 12 }}
                       >
-                        {exportingUid === r.user_id ? "..." : "📊"}
+                        {exportingUid === r.user_id ? "..." : ""}
                       </button>
                     </td>
                     <td style={{ textAlign: "right" }}>{r.received ? `${r.received.toLocaleString("ru-RU")} ${sym}` : "—"}</td>

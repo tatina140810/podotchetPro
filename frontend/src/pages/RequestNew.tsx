@@ -194,7 +194,7 @@ export default function RequestNew() {
                 checked={!isExpenseOnApprove}
                 onChange={() => setIsExpenseOnApprove(false)}
               />
-              💰 Выдача под отчёт <span className="muted" style={{ fontSize: 12 }}>(получу деньги, отчитаюсь позже)</span>
+              Выдача под отчёт <span className="muted" style={{ fontSize: 12 }}>(получу деньги, отчитаюсь позже)</span>
             </label>
             <label style={{ display: "flex", alignItems: "center", gap: 6, cursor: "pointer" }}>
               <input
@@ -203,7 +203,7 @@ export default function RequestNew() {
                 checked={isExpenseOnApprove}
                 onChange={() => setIsExpenseOnApprove(true)}
               />
-              📋 Заявка на расход <span className="muted" style={{ fontSize: 12 }}>(деньги сразу спишутся как расход)</span>
+              Заявка на расход <span className="muted" style={{ fontSize: 12 }}>(деньги сразу спишутся как расход)</span>
             </label>
           </div>
         </div>

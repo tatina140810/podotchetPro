@@ -244,7 +244,7 @@ export default function Expenses() {
                   title="Открыть карточку расхода"
                 >
                   <td className="muted" style={{ fontSize: 12 }}>{new Date(row.data.spent_at).toLocaleDateString("ru-RU")}</td>
-                  <td>🧾 {row.data.employee_name}</td>
+                  <td>{row.data.employee_name}</td>
                   <td>{row.data.category_name || "—"}</td>
                   <td style={{ textAlign: "right", fontWeight: 600 }}>
                     {formatAmountWithEquivalent(row.data.amount, row.data.currency || "KGS", usdKgs)}
@@ -261,7 +261,7 @@ export default function Expenses() {
                     )}
                     {row.data.recorded_by_name && (
                       <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>
-                        ✍️ внёс: {row.data.recorded_by_name}
+                        внёс: {row.data.recorded_by_name}
                       </div>
                     )}
                   </td>
@@ -290,13 +290,13 @@ export default function Expenses() {
                             style={{ padding: "4px 8px", fontSize: 13 }}
                             onClick={(e) => { e.stopPropagation(); setEditingExpense(row.data); }}
                             title="Изменить запись"
-                          >✏️</button>
+                          >Изм.</button>
                           <button
                             className="danger"
                             style={{ padding: "4px 8px", fontSize: 13 }}
                             onClick={(e) => { e.stopPropagation(); onDeleteExpense(row.data); }}
                             title="Удалить запись"
-                          >🗑</button>
+                          >Удал.</button>
                         </>
                       )}
                     </div>
@@ -305,7 +305,7 @@ export default function Expenses() {
               ) : (
                 <tr key={`t-${row.data.id}`} style={{ background: "rgba(108,92,231,0.04)" }}>
                   <td className="muted" style={{ fontSize: 12 }}>{new Date(row.data.created_at).toLocaleDateString("ru-RU")}</td>
-                  <td>📤 {row.data.from_user_name}</td>
+                  <td>{row.data.from_user_name}</td>
                   <td>→ {row.data.to_user_name}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, color: "var(--accent-light)" }}>
                     {formatAmountWithEquivalent(row.data.amount, "KGS", usdKgs)}

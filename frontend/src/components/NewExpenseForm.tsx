@@ -190,7 +190,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
           }}
         >
           <div className="row" style={{ alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 14 }}>👤 Вношу от лица:</span>
+            <span style={{ fontSize: 14 }}>Вношу от лица:</span>
             <select
               value={onBehalfOf}
               onChange={(e) => setOnBehalfOf(e.target.value ? Number(e.target.value) : "")}
@@ -204,7 +204,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
           </div>
           {onBehalfOf && (
             <div style={{ fontSize: 12, color: "var(--warning)", marginTop: 6 }}>
-              ⚠️ Запись будет создана от имени <strong>{onBehalfName}</strong>.
+              Запись будет создана от имени <strong>{onBehalfName}</strong>.
               Аудит пометит вас как фактического автора.
             </div>
           )}
@@ -219,7 +219,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
           onClick={() => setKind("expense")}
           style={{ flex: 1, borderRadius: "10px 0 0 10px", fontSize: compact ? 13 : 15 }}
         >
-          🧾 Расход
+          Расход
         </button>
         <button
           type="button"
@@ -229,7 +229,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
           disabled={recipients.length === 0}
           title={recipients.length === 0 ? "У вас нет подотчётных для передачи" : ""}
         >
-          📤 Передать
+          Передать
         </button>
       </div>
 
@@ -317,7 +317,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             )}
             {form.to_user_id && (
               <div className="muted" style={{ fontSize: 11, marginTop: 4, color: "var(--accent-light)" }}>
-                💡 Это будет передача: с вашего баланса спишется, получатель получит на свой.
+                Это будет передача: с вашего баланса спишется, получатель получит на свой.
                 В расход компании по категориям эта запись НЕ попадёт.
               </div>
             )}

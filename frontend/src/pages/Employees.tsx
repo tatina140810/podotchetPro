@@ -117,11 +117,12 @@ export default function Employees() {
                       : <span className="muted">—</span>}
                   </td>
                   <td>
-                    {canIssue && (
-                      <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
-                        <button onClick={() => setTopupTarget(u)}>Выдать</button>
-                      </div>
-                    )}
+                    <div className="row" style={{ gap: 6, justifyContent: "flex-end" }}>
+                      <Link to={`/reports/employees/${u.id}`} title="Профиль / отчёт сотрудника">
+                        <button className="ghost" style={{ padding: "6px 10px" }}>Профиль</button>
+                      </Link>
+                      {canIssue && <button onClick={() => setTopupTarget(u)}>Выдать</button>}
+                    </div>
                   </td>
                 </tr>
               );
@@ -258,7 +259,7 @@ function TopUpModal({
               <option value="">— не указано (= Подотчёт) —</option>
               {/* Системная «Подотчёт» сверху */}
               {categories.filter((c) => c.is_system).map((c) => (
-                <option key={c.id} value={c.id}>📋 {c.name}</option>
+                <option key={c.id} value={c.id}>{c.name}</option>
               ))}
               {categories.filter((c) => !c.is_system).map((c) => (
                 <option key={c.id} value={c.id}>{c.name}</option>
@@ -270,7 +271,7 @@ function TopUpModal({
                 background: "rgba(59, 130, 246, 0.1)",
                 color: "var(--accent-light)", borderRadius: 6,
               }}>
-                📋 <b>Подотчёт</b>. {target.name} получит деньги на баланс
+                <b>Подотчёт</b>. {target.name} получит деньги на баланс
                 и сам внесёт расходы — каждый с реальной категорией.
               </div>
             ) : (
@@ -279,7 +280,7 @@ function TopUpModal({
                 background: "rgba(245, 158, 11, 0.15)",
                 color: "var(--warning)", borderRadius: 6,
               }}>
-                ⚠️ <b>Деньги сразу спишутся как расход «{selectedCat?.name}»</b>.
+                <b>Деньги сразу спишутся как расход «{selectedCat?.name}»</b>.
                 {" "}{target.name} не будет отчитываться по этой сумме —
                 {" "}авто-создастся Expense на его имя.
               </div>

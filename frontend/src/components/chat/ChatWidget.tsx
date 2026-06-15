@@ -65,7 +65,7 @@ export function ChatWidget() {
         }}
         aria-label={open ? "Закрыть чат" : "Открыть чат"}
       >
-        <span className="chat-fab-icon">💬</span>
+        <span className="chat-fab-icon">Чат</span>
         {totalUnread > 0 && !open && (
           <span className="chat-fab-badge">{totalUnread > 99 ? "99+" : totalUnread}</span>
         )}

@@ -382,6 +382,10 @@ def update_expense(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Менять можно только свои pending-расходы")
 
     data = payload.model_dump(exclude_unset=True)
+    if data.get("department_id") is not None:
+        dep = db.get(Department, data["department_id"])
+        if not dep or dep.org_id != me.org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
     for field, value in data.items():
         setattr(e, field, value)
 

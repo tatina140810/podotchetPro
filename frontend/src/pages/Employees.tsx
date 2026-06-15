@@ -176,6 +176,8 @@ function TopUpModal({
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [categoryId, setCategoryId] = useState<string>("");
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentId, setDepartmentId] = useState<string>("");
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -186,6 +188,7 @@ function TopUpModal({
       const podotchet = cats.find((c) => c.is_system && c.name === "Подотчёт");
       if (podotchet) setCategoryId(String(podotchet.id));
     }).catch(() => {});
+    listDepartments().then(setDepartments).catch(() => {});
   }, []);
 
   const selectedCat = categories.find((c) => String(c.id) === categoryId);
@@ -207,6 +210,7 @@ function TopUpModal({
         note: note.trim() || null,
         date: date ? new Date(date).toISOString() : undefined,
         category_id: categoryId ? Number(categoryId) : null,
+        department_id: departmentId ? Number(departmentId) : null,
       });
       onSaved(amt);
     } catch (e: any) {
@@ -285,6 +289,13 @@ function TopUpModal({
                 {" "}авто-создастся Expense на его имя.
               </div>
             )}
+          </div>
+          <div>
+            <label>Подразделение</label>
+            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+              <option value="">— нет —</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
           </div>
           <div>
             <label>Дата выдачи</label>

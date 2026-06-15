@@ -66,6 +66,7 @@ export function ProfileEditableTable(p: Props) {
       from_text: r.kind === "income" ? (r.from_name || "") : "",
       to_user_id: r.to_user_id != null ? String(r.to_user_id) : "",
       category_id: r.category_id != null ? String(r.category_id) : "",
+      department_id: r.department_id != null ? String(r.department_id) : "",
     });
     p.setEditingKey(`${p.kind}:${r.id}`);
   }
@@ -89,13 +90,14 @@ export function ProfileEditableTable(p: Props) {
     const amount = parseFloat(String(form.amount).replace(",", "."));
     const dateISO = new Date(form.date).toISOString();
     const catId = form.category_id ? Number(form.category_id) : null;
+    const depId = form.department_id ? Number(form.department_id) : null;
     setBusy(true);
     try {
       if (p.kind === "received") {
         if (!row) {
           await profileApi.createReceived(p.employeeId, {
             amount, currency: form.currency, date: dateISO, note: form.comment || null,
-            issued_by_id: form.from_id ? Number(form.from_id) : undefined,
+            department_id: depId, issued_by_id: form.from_id ? Number(form.from_id) : undefined,
           });
         } else if (row.kind === "income") {
           await profileApi.updateIncome(row.id, {
@@ -104,7 +106,7 @@ export function ProfileEditableTable(p: Props) {
           });
         } else {
           await profileApi.updateTopup(row.id, {
-            amount, currency: form.currency, date: dateISO,
+            amount, currency: form.currency, date: dateISO, department_id: depId,
             admin_id: form.from_id ? Number(form.from_id) : undefined,
             note: form.comment || null,
           });
@@ -112,26 +114,22 @@ export function ProfileEditableTable(p: Props) {
       } else if (p.kind === "transferred") {
         if (!row) {
           await profileApi.createTransfer(Number(form.to_user_id), p.employeeId, {
-            amount, currency: form.currency, date: dateISO,
+            amount, currency: form.currency, date: dateISO, department_id: depId,
             category_id: catId, note: form.comment || null,
           });
         } else {
           await profileApi.updateTopup(row.id, {
-            amount, currency: form.currency, date: dateISO,
+            amount, currency: form.currency, date: dateISO, department_id: depId,
             user_id: Number(form.to_user_id), category_id: catId, note: form.comment || null,
           });
         }
       } else {
         const body: any = {
           amount, currency: form.currency, spent_at: dateISO,
-          category_id: catId, description: form.comment || null,
+          category_id: catId, description: form.comment || null, department_id: depId,
         };
-        if (!row) {
-          if (form.department_id) body.department_id = Number(form.department_id);
-          await profileApi.createExpense(p.employeeId, body);
-        } else {
-          await profileApi.updateExpense(row.id, body);
-        }
+        if (!row) await profileApi.createExpense(p.employeeId, body);
+        else await profileApi.updateExpense(row.id, body);
       }
       toast.show("success", "Сохранено");
       cancel();
@@ -151,12 +149,12 @@ export function ProfileEditableTable(p: Props) {
     if (p.kind === "received") {
       return r.kind === "income"
         ? () => profileApi.createIncome(p.employeeId, { ...base, source: r.from_name || "—", description: r.comment || null })
-        : () => profileApi.createReceived(p.employeeId, { ...base, note: r.comment || null, issued_by_id: r.from_id ?? undefined });
+        : () => profileApi.createReceived(p.employeeId, { ...base, note: r.comment || null, department_id: r.department_id ?? null, issued_by_id: r.from_id ?? undefined });
     }
     if (p.kind === "transferred") {
-      return () => profileApi.createTransfer(r.to_user_id, p.employeeId, { ...base, category_id: r.category_id ?? null, note: r.comment || null });
+      return () => profileApi.createTransfer(r.to_user_id, p.employeeId, { ...base, department_id: r.department_id ?? null, category_id: r.category_id ?? null, note: r.comment || null });
     }
-    return () => profileApi.createExpense(p.employeeId, { amount: r.amount, currency: r.currency, spent_at: r.date, category_id: r.category_id ?? null, description: r.comment || null });
+    return () => profileApi.createExpense(p.employeeId, { amount: r.amount, currency: r.currency, spent_at: r.date, category_id: r.category_id ?? null, description: r.comment || null, department_id: r.department_id ?? null });
   }
   async function remove(r: any) {
     if (!confirm("Удалить эту запись? Действие необратимо.")) return;
@@ -178,11 +176,14 @@ export function ProfileEditableTable(p: Props) {
   function FormCells({ row }: { row: any | null }) {
     const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
     const dateInp = <input type="date" value={form.date || ""} onChange={(e) => set("date", e.target.value)} />;
-    const amountInp = <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => set("amount", e.target.value)} style={{ textAlign: "right", width: 100 }} />;
+    const amountInp = <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => set("amount", e.target.value)} style={{ textAlign: "right", width: 90 }} />;
     const curInp = (
-      <select value={form.currency} onChange={(e) => set("currency", e.target.value)}>
+      <select value={form.currency} onChange={(e) => set("currency", e.target.value)} style={{ width: 72, padding: "6px 6px" }}>
         <option value="KGS">KGS</option><option value="USD">USD</option><option value="RUB">RUB</option>
       </select>
+    );
+    const moneyCell = (
+      <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "nowrap" }}>{amountInp}{curInp}</div>
     );
     const commentInp = <input value={form.comment} onChange={(e) => set("comment", e.target.value)} placeholder="Комментарий" />;
     const userSel = (key: string) => (
@@ -202,23 +203,21 @@ export function ProfileEditableTable(p: Props) {
       : userSel("from_id");
 
     const cells: React.ReactNode[] = [];
-    if (p.kind === "received") cells.push(dateInp, fromCell, <>{amountInp} {curInp}</>, commentInp);
-    else if (p.kind === "transferred") cells.push(dateInp, userSel("to_user_id"), catSel, <>{amountInp} {curInp}</>, commentInp);
-    else {
-      cells.push(dateInp, catSel, <>{amountInp} {curInp}</>, commentInp);
-    }
+    if (p.kind === "received") cells.push(dateInp, fromCell, moneyCell, commentInp);
+    else if (p.kind === "transferred") cells.push(dateInp, userSel("to_user_id"), catSel, moneyCell, commentInp);
+    else cells.push(dateInp, catSel, moneyCell, commentInp);
     return (
       <tr style={{ background: "rgba(255,255,255,0.04)" }}>
         {cells.map((c, i) => <td key={i}>{c}</td>)}
         <td>
-          {p.kind === "expenses" && !row && deptChoices.length > 1 && (
-            <select value={form.department_id} onChange={(e) => set("department_id", e.target.value)} style={{ marginRight: 6 }}>
+          <div style={{ display: "flex", gap: 4, alignItems: "center", flexWrap: "nowrap" }}>
+            <select value={form.department_id} onChange={(e) => set("department_id", e.target.value)} title="Подразделение" style={{ width: 130 }}>
               <option value="">подразделение…</option>
               {deptChoices.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
-          )}
-          <button disabled={busy} onClick={() => save(row)} style={{ padding: "2px 8px" }}>✓</button>
-          <button className="ghost" disabled={busy} onClick={cancel} style={{ padding: "2px 8px" }}>✗</button>
+            <button disabled={busy} onClick={() => save(row)} style={{ padding: "2px 8px" }}>✓</button>
+            <button className="ghost" disabled={busy} onClick={cancel} style={{ padding: "2px 8px" }}>✗</button>
+          </div>
         </td>
       </tr>
     );

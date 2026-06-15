@@ -398,6 +398,7 @@ def recent_operations(
             "who": t.user.name if t.user else None,
             "user_id": t.user_id,
             "category_id": t.category_id,
+            "department_id": t.department_id,
             "amount": float(t.amount),
             "currency": t.currency,
             "note": t.note,

@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import { useToast } from "./Toast";
 import { listColleagues } from "../api/users";
 import { updateTopup, type BalanceTopUp } from "../api/transfers";
+import { listDepartments, type Department } from "../api/departments";
 import type { UserOut } from "../context/AuthContext";
 
 interface Props {
@@ -17,6 +18,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
   const toast = useToast();
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [form, setForm] = useState({
     amount: String(topup.amount),
     currency: (topup.currency || "KGS") as "KGS" | "USD" | "RUB",
@@ -24,6 +26,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
     user_id: String(topup.user_id),
     admin_id: String(topup.admin_id),
     category_id: topup.category_id ? String(topup.category_id) : "",
+    department_id: topup.department_id ? String(topup.department_id) : "",
     date: topup.date ? topup.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
   const [busy, setBusy] = useState(false);
@@ -31,6 +34,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
   useEffect(() => {
     listColleagues().then(setColleagues).catch(() => {});
     api<CategoryOpt[]>("/api/categories").then(setCategories).catch(() => {});
+    listDepartments().then(setDepartments).catch(() => {});
   }, []);
 
   async function submit(e: React.FormEvent) {
@@ -47,6 +51,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
         admin_id: Number(form.admin_id),
         date: new Date(form.date).toISOString(),
         category_id: form.category_id ? Number(form.category_id) : null,
+        department_id: form.department_id ? Number(form.department_id) : null,
       });
       toast.show("success", "Выдача обновлена");
       onSaved();
@@ -100,6 +105,13 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
             <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
               <option value="">— нет —</option>
               {categories.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label>Подразделение</label>
+            <select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
+              <option value="">— нет —</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
           <div>

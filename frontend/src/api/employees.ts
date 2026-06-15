@@ -2,16 +2,17 @@ import { api, downloadFile } from "./client";
 
 export interface ReceivedRow {
   id: number; kind?: string; date: string;
-  from_name: string | null; from_id: number | null; amount: number; currency: string;
-  amount_kgs: number; comment: string | null;
+  from_name: string | null; from_id: number | null; department_id: number | null;
+  amount: number; currency: string; amount_kgs: number; comment: string | null;
 }
 export interface TransferredRow {
   id: number; date: string; to_name: string | null; to_user_id: number | null;
-  category: string | null; category_id: number | null;
+  department_id: number | null; category: string | null; category_id: number | null;
   amount: number; currency: string; amount_kgs: number; comment: string | null;
 }
 export interface ExpenseRow {
   id: number; date: string; category: string | null; category_id: number | null;
+  department_id: number | null;
   amount: number; currency: string; amount_kgs: number; comment: string | null;
 }
 export interface RequestOwnRow {

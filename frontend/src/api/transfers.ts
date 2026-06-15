@@ -26,6 +26,8 @@ export interface BalanceTopUp {
   date: string;        // бизнес-дата операции
   category_id: number | null;
   category_name: string | null;
+  department_id: number | null;
+  department_name: string | null;
   created_at: string;  // когда запись внесли в систему
 }
 
@@ -49,6 +51,8 @@ export function topupUser(
     note?: string | null;
     date?: string;
     category_id?: number | null;
+    department_id?: number | null;
+    issued_by_id?: number | null;
   }
 ): Promise<BalanceTopUp> {
   return api<BalanceTopUp>(`/api/users/${userId}/topup`, {
@@ -75,6 +79,7 @@ export function updateTopup(
     user_id: number;
     admin_id: number;
     category_id: number | null;
+    department_id: number | null;
   }>
 ): Promise<BalanceTopUp> {
   return api<BalanceTopUp>(`/api/users/topups/${id}`, { method: "PATCH", body: payload });

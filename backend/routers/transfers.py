@@ -313,6 +313,11 @@ def update_topup(
         if not issuer or issuer.org_id != admin.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выдающий не найден")
         t.admin_id = data["admin_id"]
+    if "department_id" in data and data["department_id"] is not None:
+        dep = db.get(Department, data["department_id"])
+        if not dep or dep.org_id != admin.org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+        t.department_id = data["department_id"]
     for f in ("amount", "note", "date", "category_id", "currency"):
         if f in data:
             setattr(t, f, data[f])

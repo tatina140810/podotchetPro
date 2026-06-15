@@ -269,6 +269,7 @@ class ExpenseCreate(BaseModel):
 
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
+    department_id: Optional[int] = None
     amount: Optional[Decimal] = Field(default=None, gt=0)
     currency: Optional[str] = Field(default=None, max_length=8)
     description: Optional[str] = None
@@ -786,6 +787,7 @@ class BalanceTopUpUpdate(BaseModel):
     user_id: Optional[int] = None  # на случай если ошибочно зачислили не тому
     admin_id: Optional[int] = None  # кто выдал
     category_id: Optional[int] = None
+    department_id: Optional[int] = None
 
 
 # Forward refs

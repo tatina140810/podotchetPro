@@ -455,6 +455,7 @@ interface RecentOp {
   note?: string | null;
   category_name?: string | null;
   category_id?: number | null;
+  department_id?: number | null;
   issued_by?: string | null;
   issued_by_id?: number | null;
   employee_id?: number | null;
@@ -946,6 +947,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             date: editing.date,
             category_id: editing.category_id ?? null,
             category_name: editing.category_name ?? null,
+            department_id: editing.department_id ?? null,
+            department_name: null,
             created_at: editing.date,
           }}
           onClose={() => setEditing(null)}

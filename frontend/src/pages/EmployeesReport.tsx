@@ -203,7 +203,7 @@ export default function EmployeesReport() {
                         title="Скачать Excel с развёрткой операций за выбранный месяц"
                         style={{ marginLeft: 8, padding: "2px 8px", fontSize: 12 }}
                       >
-                        {exportingUid === r.user_id ? "..." : ""}
+                        {exportingUid === r.user_id ? "..." : "Excel"}
                       </button>
                     </td>
                     <td style={{ textAlign: "right" }}>{r.received ? `${r.received.toLocaleString("ru-RU")} ${sym}` : "—"}</td>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useToast } from "./Toast";
+import { listDepartments, type Department } from "../api/departments";
 
 interface Category { id: number; name: string }
 
@@ -20,6 +21,8 @@ interface Props {
 export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   const toast = useToast();
   const [categories, setCategories] = useState<Category[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentId, setDepartmentId] = useState("");
   const [form, setForm] = useState({
     amount: String(expense.amount),
     currency: (expense.currency || "KGS") as "KGS" | "USD" | "RUB",
@@ -29,7 +32,10 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   });
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { api<Category[]>("/api/categories").then(setCategories).catch(() => {}); }, []);
+  useEffect(() => {
+    api<Category[]>("/api/categories").then(setCategories).catch(() => {});
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -37,16 +43,16 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     if (!isFinite(amt) || amt <= 0) { toast.show("error", "Сумма > 0"); return; }
     setBusy(true);
     try {
-      await api(`/api/expenses/${expense.id}`, {
-        method: "PATCH",
-        body: {
-          amount: amt,
-          currency: form.currency,
-          category_id: form.category_id ? Number(form.category_id) : null,
-          description: form.description.trim() || null,
-          spent_at: new Date(form.spent_at).toISOString(),
-        },
-      });
+      const body: any = {
+        amount: amt,
+        currency: form.currency,
+        category_id: form.category_id ? Number(form.category_id) : null,
+        description: form.description.trim() || null,
+        spent_at: new Date(form.spent_at).toISOString(),
+      };
+      // department_id отправляем только если выбрали (иначе не трогаем текущее).
+      if (departmentId) body.department_id = Number(departmentId);
+      await api(`/api/expenses/${expense.id}`, { method: "PATCH", body });
       toast.show("success", "Расход обновлён");
       onSaved();
     } catch (e: any) {
@@ -85,6 +91,13 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
             <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
               <option value="">— нет —</option>
               {categories.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label>Подразделение</label>
+            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+              <option value="">— не менять —</option>
+              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
             </select>
           </div>
           <div>

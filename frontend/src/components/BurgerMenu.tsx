@@ -33,6 +33,7 @@ export function BurgerMenu() {
     ? [
         { to: "/", label: "Отчёт по категориям" },
         { to: "/reports/employees", label: "Отчёт по сотрудникам" },
+        { to: "/reports/departments", label: "Отчёт по подразделениям" },
         // «Приходы» — только admin/superadmin и gen_director (НЕ аудитору)
         ...(user.role !== "auditor" ? [{ to: "/reports/incomes", label: "Приходы" }] : []),
         { to: "/requests", label: "Заявки" },

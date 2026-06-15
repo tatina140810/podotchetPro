@@ -20,6 +20,7 @@ from models import (
     BalanceTopUp,
     Category,
     Department,
+    EmployeeDepartment,
     Expense,
     Income,
     Organization,
@@ -695,6 +696,7 @@ def _build_category_report(
         kgs_value = float(Decimal(str(e.amount)) * rate_for_cur)
         item = {
             "id": e.id,
+            "department_id": e.department_id,
             "amount": float(e.amount),
             "currency": e.currency,
             "amount_kgs": kgs_value,
@@ -714,8 +716,14 @@ def _build_category_report(
         cat = categories_map.get(cat_id) if cat_id else None
         cat_name = cat.name if cat else "Без категории"
         is_op = bool(cat.is_operational) if cat else False
-        # Колонка «Подразделение»: для общих категорий (department_id=NULL) — пусто.
-        cat_dept = dept_names.get(cat.department_id) if (cat and cat.department_id) else None
+        # Колонка «Подразделение» — по подразделению расходов строки:
+        # одно подразделение → его имя; все NULL → «Общее»; разные → «Разные».
+        dep_ids = {i["department_id"] for i in items}
+        if len(dep_ids) == 1:
+            only = next(iter(dep_ids))
+            cat_dept = dept_names.get(only) if only else "Общее"
+        else:
+            cat_dept = "Разные"
         row = {
             "category_id": cat_id,
             "category": cat_name,
@@ -1073,6 +1081,254 @@ def employees_report(
     return _build_employees_report(
         db, me.org_id, year, month, currency,
         department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+    )
+
+
+# ===================== /api/reports/by-department =====================
+# Сводка по подразделениям. received/spent считаются по department_id записи
+# (не по членству) — чтобы суммы сходились с отчётом по категориям и не было
+# двойного учёта сотрудников в нескольких подразделениях. NULL-department —
+# целиком в блок no_department.
+
+def _build_department_report(
+    db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS",
+    hidden_ids: Optional[set] = None,
+) -> dict:
+    rates = load_org_rates(db, org_id)
+    usd = rates.get("USD")
+    start, end = _month_range(year, month)
+    hidden = hidden_ids or set()
+    exp_kgs = to_kgs_expr(Expense.amount, Expense.currency, rates)
+    top_kgs = to_kgs_expr(BalanceTopUp.amount, BalanceTopUp.currency, rates)
+
+    def disp(v: float) -> float:
+        return _maybe_convert_usd(float(v or 0), display_currency, usd)
+
+    # База расходов — те же фильтры, что в отчёте по категориям (для схождения сумм).
+    exp_base = (
+        db.query(Expense)
+        .outerjoin(Category, Category.id == Expense.category_id)
+        .filter(
+            Expense.org_id == org_id,
+            Expense.status.in_(("approved", "pending")),
+            Expense.expense_type == "expense",
+            Expense.spent_at >= start, Expense.spent_at < end,
+            (Category.id.is_(None)) | (Category.is_system.is_(False)),
+        )
+    )
+    if hidden:
+        exp_base = exp_base.filter(Expense.employee_id.notin_(hidden))
+
+    top_base = db.query(BalanceTopUp).filter(
+        BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end
+    )
+    if hidden:
+        top_base = top_base.filter(
+            BalanceTopUp.user_id.notin_(hidden), BalanceTopUp.admin_id.notin_(hidden)
+        )
+
+    # Расход и кол-во по department_id (None — отдельный ключ).
+    spent_by: dict = {}
+    cnt_exp: dict = {}
+    for dep, total, cnt in (
+        exp_base.with_entities(Expense.department_id, func.coalesce(func.sum(exp_kgs), 0), func.count())
+        .group_by(Expense.department_id).all()
+    ):
+        spent_by[dep] = float(total or 0)
+        cnt_exp[dep] = int(cnt)
+    recv_by: dict = {}
+    cnt_top: dict = {}
+    for dep, total, cnt in (
+        top_base.with_entities(BalanceTopUp.department_id, func.coalesce(func.sum(top_kgs), 0), func.count())
+        .group_by(BalanceTopUp.department_id).all()
+    ):
+        recv_by[dep] = float(total or 0)
+        cnt_top[dep] = int(cnt)
+
+    # Топ категорий: (department_id, category_id) -> сумма.
+    cat_by_dep: dict = {}
+    for dep, cat_id, total in (
+        exp_base.with_entities(Expense.department_id, Expense.category_id, func.coalesce(func.sum(exp_kgs), 0))
+        .group_by(Expense.department_id, Expense.category_id).all()
+    ):
+        cat_by_dep.setdefault(dep, []).append((cat_id, float(total or 0)))
+
+    # Сотрудники: расход (dep,employee_id) и приход (dep,user_id).
+    emp_spent: dict = {}
+    for dep, uid, total in (
+        exp_base.with_entities(Expense.department_id, Expense.employee_id, func.coalesce(func.sum(exp_kgs), 0))
+        .group_by(Expense.department_id, Expense.employee_id).all()
+    ):
+        emp_spent[(dep, uid)] = float(total or 0)
+    emp_recv: dict = {}
+    for dep, uid, total in (
+        top_base.with_entities(BalanceTopUp.department_id, BalanceTopUp.user_id, func.coalesce(func.sum(top_kgs), 0))
+        .group_by(BalanceTopUp.department_id, BalanceTopUp.user_id).all()
+    ):
+        emp_recv[(dep, uid)] = float(total or 0)
+
+    # Кто имеет активность в подразделении (для полноты списка — расход/приход мог
+    # пометить подразделением сотрудника, который в нём не состоит).
+    act_by_dep: dict = {}
+    for (dep, uid) in list(emp_spent.keys()) + list(emp_recv.keys()):
+        act_by_dep.setdefault(dep, set()).add(uid)
+
+    # Членство сотрудников по подразделениям.
+    member_ids: dict = {}
+    mq = (
+        db.query(EmployeeDepartment.department_id, EmployeeDepartment.employee_id)
+        .join(User, User.id == EmployeeDepartment.employee_id)
+        .filter(User.org_id == org_id, User.is_active.is_(True))
+    )
+    if hidden:
+        mq = mq.filter(User.id.notin_(hidden))
+    for dep_id, uid in mq.all():
+        member_ids.setdefault(dep_id, set()).add(uid)
+
+    # Имена пользователей (включая неактивных — для исторических операций).
+    user_names = {u.id: u.name for u in db.query(User.id, User.name).filter(User.org_id == org_id).all()}
+
+    # transferred (по членству, информативно): сколько получили/выдали члены подразделения.
+    topin_by_user = dict(
+        top_base.with_entities(BalanceTopUp.user_id, func.coalesce(func.sum(top_kgs), 0))
+        .group_by(BalanceTopUp.user_id).all()
+    )
+    topout_by_admin = dict(
+        top_base.with_entities(BalanceTopUp.admin_id, func.coalesce(func.sum(top_kgs), 0))
+        .group_by(BalanceTopUp.admin_id).all()
+    )
+
+    cat_names = {c.id: c.name for c in db.query(Category).filter(Category.org_id == org_id).all()}
+
+    departments_out: list[dict] = []
+    for d in db.query(Department).filter(Department.org_id == org_id).order_by(Department.name).all():
+        spent_d = spent_by.get(d.id, 0.0)
+        recv_d = recv_by.get(d.id, 0.0)
+        # топ-5 категорий + «Прочее»
+        cats = sorted(cat_by_dep.get(d.id, []), key=lambda x: x[1], reverse=True)
+        top_categories = []
+        for cat_id, total in cats[:5]:
+            top_categories.append({
+                "name": cat_names.get(cat_id, "Без категории") if cat_id else "Без категории",
+                "amount": disp(total),
+                "percent": round(total / spent_d * 100, 1) if spent_d else 0.0,
+            })
+        rest = sum(t for _, t in cats[5:])
+        if rest > 0:
+            top_categories.append({"name": "Прочее", "amount": disp(rest),
+                                   "percent": round(rest / spent_d * 100, 1) if spent_d else 0.0})
+        # сотрудники подразделения: члены + все, у кого есть активность в нём
+        # (иначе суммы по сотрудникам не сойдутся с расходом/приходом подразделения).
+        mids = member_ids.get(d.id, set())
+        uid_set = set(mids) | act_by_dep.get(d.id, set())
+        emps = []
+        for uid in uid_set:
+            emps.append({
+                "id": uid, "name": user_names.get(uid, f"#{uid}"),
+                "spent": disp(emp_spent.get((d.id, uid), 0.0)),
+                "received": disp(emp_recv.get((d.id, uid), 0.0)),
+            })
+        emps.sort(key=lambda e: (e["spent"], e["received"]), reverse=True)
+        tr_in = sum(float(topin_by_user.get(uid, 0) or 0) for uid in mids)
+        tr_out = sum(float(topout_by_admin.get(uid, 0) or 0) for uid in mids)
+        departments_out.append({
+            "id": d.id, "name": d.name,
+            "summary": {
+                "received": disp(recv_d), "spent": disp(spent_d),
+                "transferred_in": disp(tr_in), "transferred_out": disp(tr_out),
+                "result": disp(recv_d - spent_d),
+                "operations_count": cnt_exp.get(d.id, 0) + cnt_top.get(d.id, 0),
+            },
+            "top_categories": top_categories,
+            "employees": emps,
+        })
+
+    total_recv = sum(recv_by.values())
+    total_spent = sum(spent_by.values())
+    return {
+        "period": {"month": month, "year": year},
+        "currency": display_currency if (display_currency == "KGS" or usd) else "KGS",
+        "departments": departments_out,
+        "totals": {
+            "received": disp(total_recv), "spent": disp(total_spent),
+            "result": disp(total_recv - total_spent),
+        },
+        "no_department": {
+            "spent": disp(spent_by.get(None, 0.0)),
+            "received": disp(recv_by.get(None, 0.0)),
+            "operations_count": cnt_exp.get(None, 0) + cnt_top.get(None, 0),
+        },
+    }
+
+
+@router.get("/by-department")
+def department_report(
+    year: int = Query(..., ge=2020, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    db: Session = Depends(get_db),
+    me: User = Depends(require_director_or_auditor),
+):
+    return _build_department_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
+
+
+@router.get("/by-department/export")
+def department_report_export(
+    year: int = Query(..., ge=2020, le=2100),
+    month: int = Query(..., ge=1, le=12),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    db: Session = Depends(get_db),
+    me: User = Depends(require_director_or_auditor),
+):
+    data = _build_department_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
+    sym = "$" if data["currency"] == "USD" else "с"
+    head_font = _Font(bold=True, color="FFFFFF")
+    head_fill = _PatternFill("solid", fgColor="4F46E5")
+    wb = _Workbook()
+
+    # Лист «Сводка»
+    ws = wb.active
+    ws.title = "Сводка"
+    ws.append(["Подразделение", f"Приход ({sym})", f"Расход ({sym})", f"Результат ({sym})", "Операций"])
+    for c in ws[1]:
+        c.font = head_font; c.fill = head_fill
+    for d in data["departments"]:
+        s = d["summary"]
+        ws.append([d["name"], s["received"], s["spent"], s["result"], s["operations_count"]])
+    nd = data["no_department"]
+    ws.append(["Без подразделения", nd["received"], nd["spent"], nd["received"] - nd["spent"], nd["operations_count"]])
+    t = data["totals"]
+    ws.append(["ИТОГО", t["received"], t["spent"], t["result"], ""])
+
+    # Лист на каждое подразделение
+    used = {"Сводка"}
+    for d in data["departments"]:
+        title = (d["name"] or f"dep_{d['id']}")[:28]
+        base = title; n = 1
+        while title in used:
+            n += 1; title = f"{base[:25]}_{n}"
+        used.add(title)
+        ws = wb.create_sheet(title)
+        ws.append(["Категория", f"Сумма ({sym})", "%"])
+        for c in ws[1]:
+            c.font = head_font; c.fill = head_fill
+        for cat in d["top_categories"]:
+            ws.append([cat["name"], cat["amount"], cat["percent"]])
+        ws.append([])
+        ws.append(["Сотрудник", f"Получил ({sym})", f"Потратил ({sym})"])
+        for c in ws[ws.max_row]:
+            c.font = head_font; c.fill = head_fill
+        for emp in d["employees"]:
+            ws.append([emp["name"], emp["received"], emp["spent"]])
+
+    import io as _io
+    buf = _io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    fname = f"departments_{year}_{month:02d}_{currency}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{_quote(fname)}"},
     )
 
 

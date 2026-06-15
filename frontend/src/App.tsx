@@ -27,6 +27,7 @@ import Departments from "./pages/Departments";
 import CategoryReport from "./pages/CategoryReport";
 import EmployeesReport from "./pages/EmployeesReport";
 import EmployeeProfile from "./pages/EmployeeProfile";
+import ReportsDepartments from "./pages/ReportsDepartments";
 import BalanceReport from "./pages/BalanceReport";
 import IncomeReport from "./pages/IncomeReport";
 import IssuedTopups from "./pages/IssuedTopups";
@@ -113,6 +114,7 @@ function RoleRoutes() {
         <Route path="/reports/categories" element={<Navigate to="/" replace />} />
         <Route path="/reports/employees" element={<EmployeesReport />} />
         <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
+        <Route path="/reports/departments" element={<ReportsDepartments />} />
         <Route path="/reports/balance" element={<BalanceReport />} />
         <Route path="/reports/incomes" element={<IncomeReport />} />
         <Route path="/issued-topups" element={<IssuedTopups />} />

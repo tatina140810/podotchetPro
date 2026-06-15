@@ -19,6 +19,7 @@ from models import (
     Advance,
     BalanceTopUp,
     Category,
+    Department,
     Expense,
     Income,
     Organization,
@@ -46,6 +47,7 @@ from services.balance import (
     to_kgs_expr,
 )
 from services.excel_export import build_workbook
+from services.permissions import hidden_user_ids
 
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -643,11 +645,13 @@ def _maybe_convert_usd(kgs_value: float, display_currency: str, usd_rate: Option
 
 
 def _build_category_report(
-    db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS"
+    db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS",
+    department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
 ) -> dict:
     """Отчёт «По категориям» — две секции (operational / other), без имён сотрудников.
     Расход = ТОЛЬКО Expense (TopUp не считается расходом компании, это движение).
-    При смене курса USD/KGS — пересчитывается через load_org_rates + to_kgs_expr."""
+    При смене курса USD/KGS — пересчитывается через load_org_rates + to_kgs_expr.
+    department_id — если задан, считаем только расходы этого подразделения."""
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
     start, end = _month_range(year, month)
@@ -660,7 +664,7 @@ def _build_category_report(
     # ещё внутри org. Они учитываются отдельно в блоке by_employee → transferred_out.
     # Также исключаем Expense с категорией is_system=True («Подотчёт») — это внутренний
     # маркер, не реальный расход компании.
-    all_expenses = (
+    exp_q = (
         db.query(Expense)
         .outerjoin(Category, Category.id == Expense.category_id)
         .filter(
@@ -671,11 +675,17 @@ def _build_category_report(
             Expense.spent_at < end,
             (Category.id.is_(None)) | (Category.is_system.is_(False)),
         )
-        .order_by(Expense.spent_at.desc())
-        .all()
     )
+    if department_id is not None:
+        exp_q = exp_q.filter(Expense.department_id == department_id)
+    if hidden_ids:  # Фича 2: собственные расходы конфиденциальных не считаем
+        exp_q = exp_q.filter(Expense.employee_id.notin_(hidden_ids))
+    all_expenses = exp_q.order_by(Expense.spent_at.desc()).all()
     categories_map: dict = {
         c.id: c for c in db.query(Category).filter(Category.org_id == org_id).all()
+    }
+    dept_names: dict = {
+        d.id: d.name for d in db.query(Department).filter(Department.org_id == org_id).all()
     }
 
     # Группируем по category_id
@@ -704,9 +714,12 @@ def _build_category_report(
         cat = categories_map.get(cat_id) if cat_id else None
         cat_name = cat.name if cat else "Без категории"
         is_op = bool(cat.is_operational) if cat else False
+        # Колонка «Подразделение»: для общих категорий (department_id=NULL) — пусто.
+        cat_dept = dept_names.get(cat.department_id) if (cat and cat.department_id) else None
         row = {
             "category_id": cat_id,
             "category": cat_name,
+            "department": cat_dept,
             "amount": _maybe_convert_usd(total_kgs, display_currency, usd_rate),
             "count": len(items),
             "items": [
@@ -726,11 +739,16 @@ def _build_category_report(
     other_subtotal = sum(r["amount"] for r in other)
 
     # --- Приходы за период ---
-    total_income_kgs = float(
-        db.query(func.coalesce(func.sum(income_expr), 0))
-        .filter(Income.org_id == org_id, Income.date >= start, Income.date < end)
-        .scalar() or 0
-    )
+    # Приходы (Income) не привязаны к подразделению — при фильтре по подразделению
+    # их не показываем (иначе исказят результат конкретного подразделения).
+    if department_id is not None:
+        total_income_kgs = 0.0
+    else:
+        total_income_kgs = float(
+            db.query(func.coalesce(func.sum(income_expr), 0))
+            .filter(Income.org_id == org_id, Income.date >= start, Income.date < end)
+            .scalar() or 0
+        )
     total_income_display = _maybe_convert_usd(total_income_kgs, display_currency, usd_rate)
     result = total_income_display - total_expenses_display
 
@@ -754,7 +772,8 @@ def _build_category_report(
 # Остаток = накопительный к концу периода.
 
 def _build_employees_report(
-    db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS"
+    db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS",
+    department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
 ) -> dict:
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
@@ -764,26 +783,34 @@ def _build_employees_report(
     expense_expr = to_kgs_expr(Expense.amount, Expense.currency, rates)
 
     # received = TopUp_in + Income (что пришло сотруднику за период)
-    topup_in_rows = dict(
+    topup_in_q = (
         db.query(BalanceTopUp.user_id, func.coalesce(func.sum(topup_expr), 0))
         .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end)
-        .group_by(BalanceTopUp.user_id).all()
     )
-    income_in_rows = dict(
-        db.query(Income.received_by_id, func.coalesce(func.sum(income_expr), 0))
-        .filter(Income.org_id == org_id, Income.date >= start, Income.date < end)
-        .group_by(Income.received_by_id).all()
-    )
+    if department_id is not None:
+        topup_in_q = topup_in_q.filter(BalanceTopUp.department_id == department_id)
+    topup_in_rows = dict(topup_in_q.group_by(BalanceTopUp.user_id).all())
+    # Income не привязан к подразделению — при фильтре исключаем.
+    if department_id is not None:
+        income_in_rows = {}
+    else:
+        income_in_rows = dict(
+            db.query(Income.received_by_id, func.coalesce(func.sum(income_expr), 0))
+            .filter(Income.org_id == org_id, Income.date >= start, Income.date < end)
+            .group_by(Income.received_by_id).all()
+        )
     # transferred_out = TopUp где он admin_id (выдал из своих). С учётом transfer-Expense
     # это уже включает все «передачи» — у каждого transfer есть пара BalanceTopUp.
-    topup_out_rows = dict(
+    topup_out_q = (
         db.query(BalanceTopUp.admin_id, func.coalesce(func.sum(topup_expr), 0))
         .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end)
-        .group_by(BalanceTopUp.admin_id).all()
     )
+    if department_id is not None:
+        topup_out_q = topup_out_q.filter(BalanceTopUp.department_id == department_id)
+    topup_out_rows = dict(topup_out_q.group_by(BalanceTopUp.admin_id).all())
     # spent = только конечные Expense (expense_type='expense'). Transfer-Expense НЕ
     # включаем — они уже учтены через topup_out_rows.
-    spent_rows = dict(
+    spent_q = (
         db.query(Expense.employee_id, func.coalesce(func.sum(expense_expr), 0))
         .filter(
             Expense.org_id == org_id,
@@ -792,10 +819,15 @@ def _build_employees_report(
             Expense.spent_at >= start,
             Expense.spent_at < end,
         )
-        .group_by(Expense.employee_id).all()
     )
+    if department_id is not None:
+        spent_q = spent_q.filter(Expense.department_id == department_id)
+    spent_rows = dict(spent_q.group_by(Expense.employee_id).all())
 
-    users = db.query(User).filter(User.org_id == org_id, User.is_active.is_(True)).all()
+    users_q = db.query(User).filter(User.org_id == org_id, User.is_active.is_(True))
+    if hidden_ids:  # Фича 2: конфиденциальные не показываются в отчёте по сотрудникам
+        users_q = users_q.filter(User.id.notin_(hidden_ids))
+    users = users_q.all()
     rows: list[dict] = []
     for u in users:
         received_kgs = float(topup_in_rows.get(u.id, 0)) + float(income_in_rows.get(u.id, 0))
@@ -835,10 +867,12 @@ def _build_employees_report(
 # Хронологическая лента всех операций org. Накопительный остаток org = Income − Expense.
 
 def _build_balance_report(
-    db: Session, org_id: int, date_from: datetime, date_to: datetime, display_currency: str = "KGS"
+    db: Session, org_id: int, date_from: datetime, date_to: datetime, display_currency: str = "KGS",
+    department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
 ) -> dict:
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
+    hidden = hidden_ids or set()
 
     def _kgs(amount, currency):
         return float(Decimal(str(amount)) * rates.get(currency, Decimal("0")))
@@ -847,33 +881,48 @@ def _build_balance_report(
     income_expr = to_kgs_expr(Income.amount, Income.currency, rates)
     expense_expr = to_kgs_expr(Expense.amount, Expense.currency, rates)
 
-    income_before = float(
-        db.query(func.coalesce(func.sum(income_expr), 0))
-        .filter(Income.org_id == org_id, Income.date < date_from)
-        .scalar() or 0
-    )
-    expense_before = float(
+    # При фильтре по подразделению приходы (Income, без подразделения) не учитываем.
+    if department_id is not None:
+        income_before = 0.0
+    else:
+        income_before_q = (
+            db.query(func.coalesce(func.sum(income_expr), 0))
+            .filter(Income.org_id == org_id, Income.date < date_from)
+        )
+        if hidden:  # Фича 2: приходы конфиденциальных не учитываем
+            income_before_q = income_before_q.filter(Income.received_by_id.notin_(hidden))
+        income_before = float(income_before_q.scalar() or 0)
+    exp_before_q = (
         db.query(func.coalesce(func.sum(expense_expr), 0))
         .filter(
             Expense.org_id == org_id,
             Expense.status.in_(("approved", "pending")),
             Expense.spent_at < date_from,
         )
-        .scalar() or 0
     )
+    if department_id is not None:
+        exp_before_q = exp_before_q.filter(Expense.department_id == department_id)
+    if hidden:  # Фича 2: собственные расходы конфиденциальных не учитываем
+        exp_before_q = exp_before_q.filter(Expense.employee_id.notin_(hidden))
+    expense_before = float(exp_before_q.scalar() or 0)
     opening_balance_kgs = income_before - expense_before
 
     # Все операции за период
     operations: list[dict] = []
-    for e in (
+    exp_period_q = (
         db.query(Expense)
         .filter(
             Expense.org_id == org_id,
             Expense.status.in_(("approved", "pending")),
             Expense.spent_at >= date_from,
             Expense.spent_at < date_to,
-        ).all()
-    ):
+        )
+    )
+    if department_id is not None:
+        exp_period_q = exp_period_q.filter(Expense.department_id == department_id)
+    if hidden:  # Фича 2
+        exp_period_q = exp_period_q.filter(Expense.employee_id.notin_(hidden))
+    for e in exp_period_q.all():
         kgs = _kgs(e.amount, e.currency)
         operations.append({
             "type": "expense",
@@ -888,10 +937,16 @@ def _build_balance_report(
             "who": e.employee.name if e.employee else None,
             "color": "red",
         })
-    for i in (
-        db.query(Income)
-        .filter(Income.org_id == org_id, Income.date >= date_from, Income.date < date_to).all()
-    ):
+    if department_id is not None:
+        income_rows = []
+    else:
+        income_q = db.query(Income).filter(
+            Income.org_id == org_id, Income.date >= date_from, Income.date < date_to
+        )
+        if hidden:  # Фича 2: приходы конфиденциальных скрыты
+            income_q = income_q.filter(Income.received_by_id.notin_(hidden))
+        income_rows = income_q.all()
+    for i in income_rows:
         kgs = _kgs(i.amount, i.currency)
         operations.append({
             "type": "income",
@@ -906,10 +961,18 @@ def _build_balance_report(
             "who": i.received_by.name if i.received_by else None,
             "color": "green",
         })
-    for t in (
+    topup_period_q = (
         db.query(BalanceTopUp)
-        .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= date_from, BalanceTopUp.date < date_to).all()
-    ):
+        .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= date_from, BalanceTopUp.date < date_to)
+    )
+    if department_id is not None:
+        topup_period_q = topup_period_q.filter(BalanceTopUp.department_id == department_id)
+    if hidden:  # Фича 2: выдачи, где конфиденциальный — отправитель ИЛИ получатель, скрыты
+        topup_period_q = topup_period_q.filter(
+            BalanceTopUp.admin_id.notin_(hidden),
+            BalanceTopUp.user_id.notin_(hidden),
+        )
+    for t in topup_period_q.all():
         kgs = _kgs(t.amount, t.currency)
         operations.append({
             "type": "transfer",
@@ -988,10 +1051,14 @@ def category_report(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
-    return _build_category_report(db, me.org_id, year, month, currency)
+    return _build_category_report(
+        db, me.org_id, year, month, currency,
+        department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+    )
 
 
 @router.get("/employees")
@@ -999,10 +1066,14 @@ def employees_report(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
-    return _build_employees_report(db, me.org_id, year, month, currency)
+    return _build_employees_report(
+        db, me.org_id, year, month, currency,
+        department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+    )
 
 
 @router.get("/incomes")
@@ -1065,6 +1136,7 @@ def balance_report(
     date_from: Optional[date] = Query(default=None, alias="from"),
     date_to: Optional[date] = Query(default=None, alias="to"),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
@@ -1081,7 +1153,10 @@ def balance_report(
         date_to = date_to - timedelta(days=1)
     df = datetime.combine(date_from, time.min)
     dt = datetime.combine(date_to + timedelta(days=1), time.min)
-    return _build_balance_report(db, me.org_id, df, dt, currency)
+    return _build_balance_report(
+        db, me.org_id, df, dt, currency,
+        department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+    )
 
 
 # ===================== Excel-экспорт =====================
@@ -1094,7 +1169,7 @@ def category_report_xlsx(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
-    data = _build_category_report(db, me.org_id, year, month, currency)
+    data = _build_category_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
 
     wb = _Workbook()
@@ -1160,7 +1235,7 @@ def employees_report_xlsx(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
-    data = _build_employees_report(db, me.org_id, year, month, currency)
+    data = _build_employees_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
     wb = _Workbook()
     ws = wb.active
@@ -1213,6 +1288,8 @@ def employee_details_xlsx(
 
     u = db.get(User, user_id)
     if not u or u.org_id != me.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
+    if user_id in hidden_user_ids(db, me):  # Фича 2: выгрузка конфиденциального скрыта
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
 
     start, end = _month_range(year, month)
@@ -1283,6 +1360,8 @@ def employee_history_xlsx(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
     if me.id != u.id and not is_director_or_auditor(me):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
+    if user_id in hidden_user_ids(db, me):  # Фича 2 (сам сотрудник видит себя)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
 
     entries = build_user_history_entries(db, me.org_id, u.id, date_from, date_to)
 

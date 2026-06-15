@@ -18,6 +18,8 @@ from models import (
     BalanceTopUp,
     ChatMember,
     ChatRoom,
+    Department,
+    EmployeeDepartment,
     EmployeeSpec,
     Expense,
     MoneyRequest,
@@ -47,10 +49,45 @@ from services.balance import (
     spent_total,
     transferred_out_total,
 )
-from services.permissions import visible_user_ids
+from services.permissions import hidden_user_ids, visible_user_ids
 
 
 router = APIRouter(prefix="/api/users", tags=["users"])
+
+
+def _dept_ids(user: User) -> list[int]:
+    """id подразделений сотрудника (через M2M)."""
+    return [d.id for d in user.departments]
+
+
+def _user_out(u: User) -> UserOut:
+    out = UserOut.model_validate(u)
+    out.department_ids = _dept_ids(u)
+    return out
+
+
+def _set_departments(db: Session, org_id: int, user: User, dept_ids: list[int]) -> None:
+    """Заменяет набор подразделений сотрудника на dept_ids (валидирует принадлежность org).
+    Пустой список — снимает все привязки."""
+    # Валидация: все id существуют и в той же org.
+    if dept_ids:
+        valid = {
+            i for (i,) in db.query(Department.id)
+            .filter(Department.org_id == org_id, Department.id.in_(dept_ids))
+            .all()
+        }
+        missing = set(dept_ids) - valid
+        if missing:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Подразделение(я) не найдены: {sorted(missing)}",
+            )
+    # Удаляем старые привязки, ставим новые.
+    db.query(EmployeeDepartment).filter(
+        EmployeeDepartment.employee_id == user.id
+    ).delete(synchronize_session=False)
+    for did in dict.fromkeys(dept_ids):  # уникализируем, сохраняя порядок
+        db.add(EmployeeDepartment(employee_id=user.id, department_id=did))
 
 
 def _add_to_general_chat(db: Session, user: User) -> None:
@@ -83,8 +120,10 @@ def _with_balance(db: Session, user: User, rates: Optional[dict] = None) -> User
     current = compute_current_balance(db, user.org_id, user.id, rates=rates)
     received = compute_total_received(db, user.org_id, user.id, rates=rates)
     total_issued_amt = compute_total_issued(db, user.org_id, user.id, rates=rates)
+    base = UserOut.model_validate(user).model_dump()
+    base["department_ids"] = _dept_ids(user)
     return UserWithBalance(
-        **UserOut.model_validate(user).model_dump(),
+        **base,
         balance=issued - spent - transferred,
         issued_total=issued,
         spent_total=spent,
@@ -105,12 +144,11 @@ def list_users(
 ):
     """Список активных сотрудников org — видят admin, gen_director, auditor.
     Soft-deleted (is_active=False) не показываются."""
-    users = (
-        db.query(User)
-        .filter(User.org_id == me.org_id, User.is_active.is_(True))
-        .order_by(User.created_at.desc())
-        .all()
-    )
+    q = db.query(User).filter(User.org_id == me.org_id, User.is_active.is_(True))
+    hidden = hidden_user_ids(db, me)
+    if hidden:  # Фича 2: конфиденциальные сотрудники не видны в общем списке
+        q = q.filter(User.id.notin_(hidden))
+    users = q.order_by(User.created_at.desc()).all()
     rates = load_org_rates(db, me.org_id)  # один раз на весь list_users
     return [_with_balance(db, u, rates=rates) for u in users]
 
@@ -122,12 +160,13 @@ def list_colleagues(
 ):
     """Лёгкий список коллег своей org — нужен accountable для выбора approver/получателя transfer.
     Без балансов, без admin-прав."""
-    users = (
-        db.query(User)
-        .filter(User.org_id == me.org_id, User.id != me.id, User.is_active.is_(True))
-        .order_by(User.name.asc())
-        .all()
+    q = db.query(User).filter(
+        User.org_id == me.org_id, User.id != me.id, User.is_active.is_(True)
     )
+    hidden = hidden_user_ids(db, me)
+    if hidden:  # Фича 2: конфиденциальные скрыты из dropdown «КТО/КОМУ» и пр.
+        q = q.filter(User.id.notin_(hidden))
+    users = q.order_by(User.name.asc()).all()
     return [UserOut.model_validate(u) for u in users]
 
 
@@ -155,10 +194,12 @@ def create_user(payload: UserCreate, db: Session = Depends(get_db), admin: User 
     )
     db.add(u)
     db.flush()
+    if payload.department_ids is not None:
+        _set_departments(db, admin.org_id, u, payload.department_ids)
     _add_to_general_chat(db, u)
     db.commit()
     db.refresh(u)
-    return UserOut.model_validate(u)
+    return _user_out(u)
 
 
 @router.get("/me", response_model=UserWithBalance)
@@ -223,6 +264,9 @@ def get_user(user_id: int, db: Session = Depends(get_db), me: User = Depends(get
         and not (u.supervisor_id and u.supervisor_id == me.id)
     ):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
+    # Фича 2: карточка/баланс конфиденциального сотрудника — только авторизованным и ему самому.
+    if user_id in hidden_user_ids(db, me):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
     return _with_balance(db, u)
 
 
@@ -426,6 +470,9 @@ def get_user_balance(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
     if me.id != u.id and not is_director_or_auditor(me):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
+    # Фича 2: баланс/история конфиденциального сотрудника — только авторизованным и ему самому.
+    if user_id in hidden_user_ids(db, me):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
 
     entries = build_user_history_entries(db, me.org_id, u.id, date_from, date_to)
     current = compute_current_balance(db, me.org_id, u.id)
@@ -539,6 +586,14 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
     data = payload.model_dump(exclude_unset=True)
     if "password" in data:
         u.password_hash = hash_password(data.pop("password"))
+    # department_ids — не колонка User, обрабатываем отдельно через M2M.
+    dept_ids = data.pop("department_ids", None)
+    # Фича 2: флаг конфиденциальности может менять ТОЛЬКО superadmin.
+    if "is_confidential" in data and admin.role != "superadmin":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Менять конфиденциальность может только superadmin",
+        )
     if "supervisor_id" in data and data["supervisor_id"] is not None:
         sup = db.get(User, data["supervisor_id"])
         if not sup or sup.org_id != admin.org_id:
@@ -549,9 +604,11 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Юзер не может быть сам своим supervisor")
     for field, value in data.items():
         setattr(u, field, value)
+    if dept_ids is not None:
+        _set_departments(db, admin.org_id, u, dept_ids)
     db.commit()
     db.refresh(u)
-    return UserOut.model_validate(u)
+    return _user_out(u)
 
 
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)

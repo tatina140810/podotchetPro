@@ -4,7 +4,8 @@ import { api } from "../api/client";
 import { ProgressBar } from "../components/ProgressBar";
 import { StatusBadge } from "../components/StatusBadge";
 import { useToast } from "../components/Toast";
-import { useAuth, type Role } from "../context/AuthContext";
+import { useAuth, isSuperadmin, type Role } from "../context/AuthContext";
+import { listDepartments, type Department } from "../api/departments";
 
 export default function EmployeeCard() {
   const { id } = useParams<{ id: string }>();
@@ -53,8 +54,8 @@ export default function EmployeeCard() {
       <div className="row between" style={{ flexWrap: "wrap", gap: 8 }}>
         <h1 className="h1" style={{ margin: 0 }}>{user.name}</h1>
         <div className="row" style={{ gap: 6, flexWrap: "wrap" }}>
-          {/* Редактирование и удаление — только admin (PATCH/DELETE /api/users требуют require_admin). */}
-          {me?.role === "admin" && (
+          {/* Редактирование — admin/superadmin (PATCH /api/users требует require_admin). */}
+          {(me?.role === "admin" || me?.role === "superadmin") && (
             <button className="ghost" onClick={() => setEditing(true)}>Изменить данные</button>
           )}
           <Link to={`/employees/${id}/chain`}><button className="ghost">Цепочка расходов</button></Link>
@@ -63,6 +64,7 @@ export default function EmployeeCard() {
               Самого себя удалить нельзя. */}
           {!isSelf && (
             me?.role === "admin"
+            || me?.role === "superadmin"
             || me?.role === "gen_director"
             || user.supervisor_id === me?.id
           ) && (
@@ -150,15 +152,28 @@ function Stat({ label, value, accent }: { label: string; value: number | string;
 }
 
 function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => void; onSaved: () => void }) {
+  const { user: me } = useAuth();
+  const canEditConfidential = isSuperadmin(me?.role);
   const [form, setForm] = useState({
     name: user.name as string,
     email: (user.email || "") as string,
     role: user.role as Role,
     is_active: !!user.is_active,
+    is_confidential: !!user.is_confidential,
     password: "",
   });
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [deptIds, setDeptIds] = useState<number[]>(user.department_ids || []);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+
+  useEffect(() => {
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
+
+  function toggleDept(did: number) {
+    setDeptIds((prev) => (prev.includes(did) ? prev.filter((x) => x !== did) : [...prev, did]));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -169,7 +184,10 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
         email: form.email || null,
         role: form.role,
         is_active: form.is_active,
+        department_ids: deptIds,
       };
+      // is_confidential отправляем только superadmin (бэкенд иначе вернёт 403).
+      if (canEditConfidential) body.is_confidential = form.is_confidential;
       if (form.password) body.password = form.password;
       await api(`/api/users/${user.id}`, { method: "PATCH", body });
       onSaved();
@@ -195,6 +213,10 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
               <option value="auditor">Аудитор</option>
               <option value="gen_director">Генеральный директор</option>
               <option value="admin">Администратор</option>
+              {/* Назначать superadmin может только сам superadmin */}
+              {(canEditConfidential || form.role === "superadmin") && (
+                <option value="superadmin">Суперадмин</option>
+              )}
             </select>
           </div>
           <label className="row" style={{ gap: 8, margin: 0 }}>
@@ -203,10 +225,47 @@ function EditUserModal({ user, onClose, onSaved }: { user: any; onClose: () => v
                    onChange={(e) => setForm({ ...form, is_active: e.target.checked })} />
             <span>Активен (если выкл — не сможет войти)</span>
           </label>
+          {canEditConfidential && (
+            <div>
+              <label className="row" style={{ gap: 8, margin: 0, cursor: "pointer" }}>
+                <input type="checkbox" style={{ width: "auto" }}
+                       checked={form.is_confidential}
+                       onChange={(e) => setForm({ ...form, is_confidential: e.target.checked })} />
+                <span>🔒 Конфиденциальный сотрудник</span>
+              </label>
+              {form.is_confidential && (
+                <div style={{
+                  marginTop: 6, padding: "8px 10px", fontSize: 12,
+                  background: "rgba(245, 158, 11, 0.15)", color: "var(--warning)", borderRadius: 6,
+                }}>
+                  Данные этого сотрудника (расходы, баланс, выдачи) будут скрыты
+                  от всех, кроме Генерального директора и Суперадмина.
+                </div>
+              )}
+            </div>
+          )}
           <div>
             <label>Новый пароль (оставьте пустым, если не меняете)</label>
             <input type="password" value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} minLength={6} />
           </div>
+          {departments.length > 0 && (
+            <div>
+              <label>Подразделения (необязательно)</label>
+              <div className="grid" style={{ gap: 4, marginTop: 4 }}>
+                {departments.map((d) => (
+                  <label key={d.id} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 400 }}>
+                    <input
+                      type="checkbox"
+                      checked={deptIds.includes(d.id)}
+                      onChange={() => toggleDept(d.id)}
+                      style={{ width: "auto", margin: 0 }}
+                    />
+                    {d.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {err && <div className="badge rejected" style={{ padding: "8px 12px" }}>{err}</div>}
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <button type="button" className="ghost" onClick={onClose}>Отмена</button>

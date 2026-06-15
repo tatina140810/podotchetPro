@@ -15,6 +15,8 @@ from auth import (
 from database import get_db
 from models import (
     Category,
+    Department,
+    EmployeeDepartment,
     Expense,
     MoneyRequest,
     MoneyRequestItem,
@@ -60,6 +62,7 @@ def _to_out(req: MoneyRequest) -> MoneyRequestOut:
     out.requester_name = req.requester.name if req.requester else None
     out.approver_name = req.approver.name if req.approver else None
     out.expense_category_name = req.expense_category.name if req.expense_category else None
+    out.department_name = req.department.name if req.department else None
     out.items = [_item_to_out(it) for it in req.items]
     return out
 
@@ -93,6 +96,7 @@ def _validate_approver(db: Session, me: User, approver_id: int) -> User:
             "gen_director",
             "auditor",
             "admin",
+            "superadmin",
         )
         if not allowed:
             raise HTTPException(
@@ -101,7 +105,7 @@ def _validate_approver(db: Session, me: User, approver_id: int) -> User:
             )
     elif me.role == "auditor":
         # auditor по ТЗ отправляет директору
-        if approver.role not in ("gen_director", "admin"):
+        if approver.role not in ("gen_director", "admin", "superadmin"):
             raise HTTPException(
                 status.HTTP_400_BAD_REQUEST,
                 "Аудитор может отправить заявку только директору или admin",
@@ -178,6 +182,27 @@ def create_request(
     _validate_approver(db, me, payload.approver_id)
     _validate_categories(db, me, payload.items)
 
+    # Подразделение — обязательно для новых заявок.
+    if payload.department_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
+    dep = db.get(Department, payload.department_id)
+    if not dep or dep.org_id != me.org_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+    # accountable может подавать заявку только из своих подразделений.
+    if me.role == "accountable":
+        is_member = (
+            db.query(EmployeeDepartment.id)
+            .filter(
+                EmployeeDepartment.employee_id == me.id,
+                EmployeeDepartment.department_id == payload.department_id,
+            )
+            .first()
+        )
+        if not is_member:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Можно выбрать только своё подразделение"
+            )
+
     # Если это «заявка на расход» — категория обязательна.
     if payload.is_expense_on_approve and payload.expense_category_id is None:
         raise HTTPException(
@@ -197,6 +222,7 @@ def create_request(
         title=payload.title,
         total_amount=Decimal(0),
         currency=(payload.currency or "KGS").upper(),
+        department_id=payload.department_id,
         is_expense_on_approve=payload.is_expense_on_approve,
         expense_category_id=payload.expense_category_id,
     )
@@ -438,6 +464,7 @@ def approve_request(
             org_id=req.org_id,
             employee_id=req.requester_id,
             category_id=req.expense_category_id,
+            department_id=req.department_id,
             amount=req.total_amount,
             currency=cur,
             amount_kgs=amount_kgs,

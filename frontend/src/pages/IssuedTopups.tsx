@@ -11,7 +11,7 @@ export default function IssuedTopups() {
   const [items, setItems] = useState<BalanceTopUp[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [editing, setEditing] = useState<BalanceTopUp | null>(null);
-  const canEdit = user?.role === "admin";
+  const canEdit = user?.role === "admin" || user?.role === "superadmin";
 
   function reload() {
     listMyIssuedTopups()

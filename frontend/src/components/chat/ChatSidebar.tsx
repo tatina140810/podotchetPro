@@ -20,6 +20,7 @@ interface Props {
 }
 
 const ROLE_SHORT: Record<Role, string> = {
+  superadmin: "суперадмин",
   admin: "admin",
   gen_director: "директор",
   auditor: "аудитор",

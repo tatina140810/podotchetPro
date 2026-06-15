@@ -15,7 +15,7 @@ def get_spec(user_id: int, db: Session = Depends(get_db), me: User = Depends(get
     target = db.get(User, user_id)
     if not target or target.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
-    if me.role != "admin" and me.id != user_id:
+    if me.role not in ("admin", "superadmin") and me.id != user_id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
 
     spec = db.query(EmployeeSpec).filter(EmployeeSpec.user_id == user_id).first()

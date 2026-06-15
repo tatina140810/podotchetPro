@@ -19,7 +19,16 @@ from auth import (
 )
 from config import get_settings
 from database import get_db
-from models import BalanceTopUp, Category, EmployeeSpec, Expense, ExpenseReceipt, User
+from models import (
+    BalanceTopUp,
+    Category,
+    Department,
+    EmployeeDepartment,
+    EmployeeSpec,
+    Expense,
+    ExpenseReceipt,
+    User,
+)
 from schemas import (
     ExpenseCreate,
     ExpenseOut,
@@ -29,7 +38,7 @@ from schemas import (
     ExpenseUpdate,
 )
 from services.exchange import get_current_rate
-from services.permissions import visible_user_ids
+from services.permissions import hidden_user_ids, visible_user_ids
 
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
@@ -42,6 +51,7 @@ def _to_out(e: Expense) -> ExpenseOut:
     out = ExpenseOut.model_validate(e)
     out.employee_name = e.employee.name if e.employee else None
     out.category_name = e.category.name if e.category else None
+    out.department_name = e.department.name if e.department else None
     out.recorded_by_name = e.recorded_by.name if e.recorded_by else None
     out.to_user_name = e.to_user.name if e.to_user else None
     out.funded_by_name = e.funded_by.name if e.funded_by else None
@@ -63,6 +73,9 @@ def list_expenses(
     visible = visible_user_ids(db, me)
     if visible is not None:  # accountable — только свои + подчинённые рекурсивно
         q = q.filter(Expense.employee_id.in_(visible))
+    hidden = hidden_user_ids(db, me)
+    if hidden:  # Фича 2: расходы конфиденциальных сотрудников полностью скрыты
+        q = q.filter(Expense.employee_id.notin_(hidden))
     if employee_id:
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
@@ -94,6 +107,9 @@ def export_expenses_xlsx(
     visible = visible_user_ids(db, me)
     if visible is not None:
         q = q.filter(Expense.employee_id.in_(visible))
+    hidden = hidden_user_ids(db, me)
+    if hidden:  # Фича 2: расходы конфиденциальных сотрудников скрыты и в экспорте
+        q = q.filter(Expense.employee_id.notin_(hidden))
     if employee_id:
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
@@ -184,7 +200,7 @@ def create_expense(
     # (admin сам утверждает в момент ввода — повторного review не нужно).
     on_behalf: Optional[User] = None
     if payload.on_behalf_of_user_id is not None:
-        if me.role != "admin":
+        if me.role not in ("admin", "superadmin"):
             raise HTTPException(
                 status.HTTP_403_FORBIDDEN,
                 "Вносить от лица другого может только admin",
@@ -208,6 +224,28 @@ def create_expense(
         cat = db.get(Category, payload.category_id)
         if not cat or cat.org_id != me.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Категория не найдена")
+
+    # Подразделение — обязательно для новых расходов.
+    if payload.department_id is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
+    dep = db.get(Department, payload.department_id)
+    if not dep or dep.org_id != me.org_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+    # accountable может вносить расход только в свои подразделения.
+    if me.role == "accountable":
+        is_member = (
+            db.query(EmployeeDepartment.id)
+            .filter(
+                EmployeeDepartment.employee_id == me.id,
+                EmployeeDepartment.department_id == payload.department_id,
+            )
+            .first()
+        )
+        if not is_member:
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Можно выбрать только своё подразделение",
+            )
 
     # Если указан получатель — это «передача» (transfer).
     # Создаём пару: Expense(expense_type='transfer', to_user_id=X) у источника +
@@ -265,6 +303,7 @@ def create_expense(
         employee_id=employee_id,
         advance_id=payload.advance_id,
         category_id=payload.category_id,
+        department_id=payload.department_id,
         amount=payload.amount,
         currency=payload.currency,
         amount_kgs=amount_kgs,
@@ -301,6 +340,7 @@ def create_expense(
             amount_kgs=amount_kgs,
             note=f"Из расхода: {payload.description or 'без описания'}",
             date=payload.spent_at or datetime.utcnow(),
+            department_id=payload.department_id,
         ))
 
     db.commit()
@@ -316,6 +356,8 @@ def get_expense(expense_id: int, db: Session = Depends(get_db), me: User = Depen
     visible = visible_user_ids(db, me)
     if visible is not None and e.employee_id not in visible:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
+    if e.employee_id in hidden_user_ids(db, me):  # Фича 2: чужой конфиденциальный расход
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     return _to_out(e)
 
 
@@ -417,6 +459,8 @@ def _load_expense_visible(db: Session, me: User, expense_id: int) -> Expense:
     visible = visible_user_ids(db, me)
     if visible is not None and e.employee_id not in visible:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
+    if e.employee_id in hidden_user_ids(db, me):  # Фича 2
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     return e
 
 

@@ -10,6 +10,7 @@ import {
   type UserOut,
 } from "../context/AuthContext";
 import { topupUser } from "../api/transfers";
+import { listDepartments, type Department } from "../api/departments";
 
 interface UserWithBalance {
   id: number;
@@ -25,6 +26,7 @@ interface UserWithBalance {
 }
 
 const ROLE_RU: Record<Role, string> = {
+  superadmin: "суперадмин",
   admin: "admin",
   gen_director: "директор",
   auditor: "аудитор",
@@ -32,6 +34,7 @@ const ROLE_RU: Record<Role, string> = {
 };
 
 const ROLE_BADGE: Record<Role, string> = {
+  superadmin: "approved",
   admin: "approved",
   gen_director: "approved",
   auditor: "pending",
@@ -321,8 +324,18 @@ function AddEmployeeModal({
     role: "accountable" as Role,
     supervisor_id: "" as number | "",
   });
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [deptIds, setDeptIds] = useState<number[]>([]);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
+
+  function toggleDept(id: number) {
+    setDeptIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -337,6 +350,7 @@ function AddEmployeeModal({
           password: form.password,
           role: form.role,
           supervisor_id: form.supervisor_id || null,
+          department_ids: deptIds,
         },
       });
       onSaved();
@@ -378,6 +392,24 @@ function AddEmployeeModal({
               ))}
             </select>
           </div>
+          {departments.length > 0 && (
+            <div>
+              <label>Подразделения (необязательно)</label>
+              <div className="grid" style={{ gap: 4, marginTop: 4 }}>
+                {departments.map((d) => (
+                  <label key={d.id} style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 400 }}>
+                    <input
+                      type="checkbox"
+                      checked={deptIds.includes(d.id)}
+                      onChange={() => toggleDept(d.id)}
+                      style={{ width: "auto", margin: 0 }}
+                    />
+                    {d.name}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
           {err && <div className="badge rejected" style={{ padding: "8px 12px" }}>{err}</div>}
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <button type="button" className="ghost" onClick={onClose}>Отмена</button>

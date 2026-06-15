@@ -6,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
 
 CURRENCY_PATTERN = "^(KGS|USD|EUR|RUB)$"
-ROLE_PATTERN = "^(admin|gen_director|auditor|accountable)$"
+ROLE_PATTERN = "^(superadmin|admin|gen_director|auditor|accountable)$"
 
 
 # ===================== AUTH =====================
@@ -58,6 +58,8 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=6)
+    # Подразделения сотрудника (мультиселект, необязательно).
+    department_ids: Optional[List[int]] = None
 
 
 class UserUpdate(BaseModel):
@@ -67,6 +69,10 @@ class UserUpdate(BaseModel):
     is_active: Optional[bool] = None
     password: Optional[str] = Field(default=None, min_length=6)
     supervisor_id: Optional[int] = None
+    # None = не менять; [] = очистить все привязки; [..] = заменить набор.
+    department_ids: Optional[List[int]] = None
+    # Конфиденциальность (Фича 2) — менять может только superadmin (проверка в роутере).
+    is_confidential: Optional[bool] = None
 
 
 class UserOut(BaseModel):
@@ -79,8 +85,11 @@ class UserOut(BaseModel):
     email: Optional[str] = None
     role: str
     is_active: bool
+    is_confidential: bool = False
     supervisor_id: Optional[int] = None
     created_at: datetime
+    # Подразделения сотрудника (id) — заполняется в роутере из M2M.
+    department_ids: List[int] = Field(default_factory=list)
 
 
 class UserWithBalance(UserOut):
@@ -148,6 +157,8 @@ class CategoryBase(BaseModel):
     is_operational: bool = False
     is_system: bool = False
     parent_id: Optional[int] = None
+    # Подразделение категории. None = общая категория (видна во всех подразделениях).
+    department_id: Optional[int] = None
 
 
 class CategoryCreate(CategoryBase):
@@ -161,6 +172,7 @@ class CategoryUpdate(BaseModel):
     is_active: Optional[bool] = None
     is_operational: Optional[bool] = None
     parent_id: Optional[int] = None
+    department_id: Optional[int] = None
 
 
 class CategoryOut(CategoryBase):
@@ -171,6 +183,26 @@ class CategoryOut(CategoryBase):
     parent_name: Optional[str] = None
     # Для селектов: «Транспорт / Такси» для подкатегорий, просто «Транспорт» для корневых.
     display_name: Optional[str] = None
+    # Название подразделения для бейджа в списке категорий (None у общих).
+    department_name: Optional[str] = None
+
+
+# ===================== DEPARTMENTS =====================
+
+class DepartmentCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class DepartmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    org_id: int
+    name: str
+    created_at: datetime
+    # Счётчики для страницы управления (заполняются в роутере).
+    employee_count: int = 0
+    category_count: int = 0
 
 
 # ===================== ADVANCES =====================
@@ -219,6 +251,8 @@ class AdvanceWarning(BaseModel):
 class ExpenseCreate(BaseModel):
     category_id: Optional[int] = None
     advance_id: Optional[int] = None
+    # Подразделение — обязательно для новых расходов (проверяется в роутере).
+    department_id: Optional[int] = None
     amount: Decimal = Field(..., gt=0)
     currency: str = Field(default="KGS", pattern="^(KGS|USD|EUR|RUB)$")
     description: Optional[str] = None
@@ -289,8 +323,10 @@ class ExpenseOut(BaseModel):
     spent_at: datetime
     created_at: datetime
     updated_at: datetime
+    department_id: Optional[int] = None
     employee_name: Optional[str] = None
     category_name: Optional[str] = None
+    department_name: Optional[str] = None
     recorded_by_name: Optional[str] = None
     to_user_name: Optional[str] = None
     funded_by_name: Optional[str] = None
@@ -453,6 +489,8 @@ class MoneyRequestItemOut(BaseModel):
 class MoneyRequestCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     approver_id: int
+    # Подразделение — обязательно для новых заявок (проверяется в роутере).
+    department_id: Optional[int] = None
     currency: str = Field(default="KGS", max_length=8)
     items: List[MoneyRequestItemIn] = Field(default_factory=list)
     # Если True — при одобрении автоматически создаётся Expense у requester'а,
@@ -487,6 +525,8 @@ class MoneyRequestOut(BaseModel):
     total_amount: Decimal
     currency: str = "KGS"
     comment: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
     is_expense_on_approve: bool = False
     expense_category_id: Optional[int] = None
     expense_category_name: Optional[str] = None
@@ -528,6 +568,8 @@ class BalanceTopUpCreate(BaseModel):
     # Если не указана — ставится сейчас.
     date: Optional[datetime] = None
     category_id: Optional[int] = None
+    # Подразделение — обязательно для новых пополнений (проверяется в роутере).
+    department_id: Optional[int] = None
 
 
 class BalanceTopUpOut(BaseModel):
@@ -546,6 +588,8 @@ class BalanceTopUpOut(BaseModel):
     date: datetime
     category_id: Optional[int] = None
     category_name: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
     created_at: datetime
 
 
@@ -638,6 +682,8 @@ class BulkImportItem(BaseModel):
     amount: Decimal = Field(..., gt=0)
     currency: str = Field(default="KGS", pattern="^(KGS|USD|EUR|RUB)$")
     category_id: Optional[int] = None         # для expense и topup
+    # Подразделение — обязательно для expense/topup (для income игнорируется).
+    department_id: Optional[int] = None
     source: Optional[str] = None              # для income
     description: Optional[str] = None
     note: Optional[str] = None                # для topup

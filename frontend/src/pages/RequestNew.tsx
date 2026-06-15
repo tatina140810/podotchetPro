@@ -10,10 +10,12 @@ import {
   type MoneyRequestItemIn,
 } from "../api/requests";
 import { listColleagues } from "../api/users";
+import { listDepartments, type Department } from "../api/departments";
 
 interface Category {
   id: number;
   name: string;
+  department_id?: number | null;
 }
 
 interface DraftItem {
@@ -32,10 +34,12 @@ export default function RequestNew() {
 
   const [title, setTitle] = useState("");
   const [approverId, setApproverId] = useState<number | "">("");
+  const [departmentId, setDepartmentId] = useState<number | "">("");
   const [currency, setCurrency] = useState<"KGS" | "USD" | "RUB">("KGS");
   const [items, setItems] = useState<DraftItem[]>([{ ...EMPTY_ITEM }]);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [busy, setBusy] = useState(false);
   const [isExpenseOnApprove, setIsExpenseOnApprove] = useState(false);
   const [expenseCategoryId, setExpenseCategoryId] = useState<number | "">("");
@@ -43,7 +47,20 @@ export default function RequestNew() {
   useEffect(() => {
     listColleagues().then(setColleagues).catch(() => {});
     api<Category[]>("/api/categories").then(setCategories).catch(() => {});
+    listDepartments()
+      .then((ds) => {
+        setDepartments(ds);
+        // Если подразделение одно — подставляем автоматически.
+        if (ds.length === 1) setDepartmentId(ds[0].id);
+      })
+      .catch(() => {});
   }, []);
+
+  // Категории: общие (department_id=null) + категории выбранного подразделения.
+  const visibleCategories = useMemo(() => {
+    if (!departmentId) return categories;
+    return categories.filter((c) => c.department_id == null || c.department_id === departmentId);
+  }, [categories, departmentId]);
 
   // Список допустимых approver: для accountable — supervisor + директоры/аудиторы/admin;
   // для auditor — только директоры/admin.
@@ -55,11 +72,14 @@ export default function RequestNew() {
           c.id === user.supervisor_id ||
           c.role === "gen_director" ||
           c.role === "auditor" ||
-          c.role === "admin"
+          c.role === "admin" ||
+          c.role === "superadmin"
       );
     }
     if (user.role === "auditor") {
-      return colleagues.filter((c) => c.role === "gen_director" || c.role === "admin");
+      return colleagues.filter(
+        (c) => c.role === "gen_director" || c.role === "admin" || c.role === "superadmin"
+      );
     }
     return colleagues;
   }, [colleagues, user]);
@@ -93,6 +113,10 @@ export default function RequestNew() {
       toast.show("error", "Выберите кому отправить");
       return null;
     }
+    if (!departmentId) {
+      toast.show("error", "Выберите подразделение");
+      return null;
+    }
     if (isExpenseOnApprove && !expenseCategoryId) {
       toast.show("error", "Для заявки на расход выберите категорию");
       return null;
@@ -116,6 +140,7 @@ export default function RequestNew() {
     return {
       title: title.trim(),
       approver_id: Number(approverId),
+      department_id: Number(departmentId),
       currency,
       items: built,
       is_expense_on_approve: isExpenseOnApprove,
@@ -190,6 +215,23 @@ export default function RequestNew() {
             placeholder="Закупка канцелярии"
           />
         </div>
+        <div>
+          <label>Подразделение <span style={{ color: "var(--danger)" }}>*</span></label>
+          <select
+            value={departmentId}
+            onChange={(e) => {
+              setDepartmentId(e.target.value ? Number(e.target.value) : "");
+              // Сбрасываем выбранные категории — могут не относиться к новому подразделению.
+              setItems((prev) => prev.map((it) => ({ ...it, category_id: null })));
+              setExpenseCategoryId("");
+            }}
+          >
+            <option value="">— выберите —</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+          </select>
+        </div>
         <div className="row" style={{ gap: 12, alignItems: "flex-end" }}>
           <div style={{ flex: 2 }}>
             <label>Кому отправить</label>
@@ -222,7 +264,7 @@ export default function RequestNew() {
               onChange={(e) => setExpenseCategoryId(e.target.value ? Number(e.target.value) : "")}
             >
               <option value="">— Выбрать —</option>
-              {categories.map((c: any) => (
+              {visibleCategories.map((c: any) => (
                 <option key={c.id} value={c.id}>{c.display_name || c.name}</option>
               ))}
             </select>
@@ -265,7 +307,7 @@ export default function RequestNew() {
                     }
                   >
                     <option value="">—</option>
-                    {categories.map((c: any) => (
+                    {visibleCategories.map((c: any) => (
                       <option key={c.id} value={c.id}>{c.display_name || c.name}</option>
                     ))}
                   </select>
@@ -331,6 +373,7 @@ export default function RequestNew() {
 function roleLabel(role: string): string {
   return (
     {
+      superadmin: "суперадмин",
       admin: "admin",
       gen_director: "ген. директор",
       auditor: "аудитор",

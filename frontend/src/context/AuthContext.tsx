@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 import { api, getToken, setToken } from "../api/client";
 
-export type Role = "admin" | "gen_director" | "auditor" | "accountable";
+export type Role = "superadmin" | "admin" | "gen_director" | "auditor" | "accountable";
 
 export interface UserOut {
   id: number;
@@ -11,13 +11,16 @@ export interface UserOut {
   email: string | null;
   role: Role;
   is_active: boolean;
+  is_confidential?: boolean;
   supervisor_id: number | null;
   created_at: string;
+  department_ids?: number[];
 }
 
 // Хелперы для проверки прав на фронте (зеркалят auth.py).
-export const DIRECTOR_LEVEL: Role[] = ["admin", "gen_director"];
-export const DIRECTOR_OR_AUDITOR: Role[] = ["admin", "gen_director", "auditor"];
+// superadmin добавлен во все списки наравне с admin.
+export const DIRECTOR_LEVEL: Role[] = ["admin", "gen_director", "superadmin"];
+export const DIRECTOR_OR_AUDITOR: Role[] = ["admin", "gen_director", "auditor", "superadmin"];
 
 export function isDirectorLevel(role?: Role | null): boolean {
   return !!role && DIRECTOR_LEVEL.includes(role);
@@ -25,6 +28,10 @@ export function isDirectorLevel(role?: Role | null): boolean {
 
 export function isDirectorOrAuditor(role?: Role | null): boolean {
   return !!role && DIRECTOR_OR_AUDITOR.includes(role);
+}
+
+export function isSuperadmin(role?: Role | null): boolean {
+  return role === "superadmin";
 }
 
 export interface OrgOut {

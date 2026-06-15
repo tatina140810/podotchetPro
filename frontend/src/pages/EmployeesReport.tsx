@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
+import { listDepartments, type Department } from "../api/departments";
 
 interface EmployeeRow {
   user_id: number;
@@ -37,6 +38,12 @@ export default function EmployeesReport() {
   const [exporting, setExporting] = useState(false);
   const [expanded, setExpanded] = useState<Set<number>>(new Set());
   const [details, setDetails] = useState<Record<number, any[] | null>>({});
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentId, setDepartmentId] = useState<number | "">("");
+
+  useEffect(() => {
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
 
   function toggle(uid: number) {
     setExpanded((prev) => {
@@ -67,7 +74,8 @@ export default function EmployeesReport() {
 
   function reload() {
     setErr(null);
-    api<Report>(`/api/reports/employees?year=${year}&month=${month}&currency=${display}&_t=${Date.now()}`)
+    const dep = departmentId ? `&department_id=${departmentId}` : "";
+    api<Report>(`/api/reports/employees?year=${year}&month=${month}&currency=${display}${dep}&_t=${Date.now()}`)
       .then(setData)
       .catch((e) => setErr(e.message));
   }
@@ -78,7 +86,7 @@ export default function EmployeesReport() {
     setExpanded(new Set());
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, display]);
+  }, [year, month, display, departmentId]);
 
   async function onExport() {
     setExporting(true);
@@ -137,6 +145,15 @@ export default function EmployeesReport() {
           <div>
             <label>Год</label>
             <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 90 }} />
+          </div>
+          <div>
+            <label>Подразделение</label>
+            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : "")}>
+              <option value="">Все</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
           </div>
           <div className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
             Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b> — меняется тумблером в шапке.

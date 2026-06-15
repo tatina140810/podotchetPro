@@ -12,6 +12,7 @@ import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useAuth, type UserOut } from "../context/AuthContext";
 import { listColleagues } from "../api/users";
+import { listDepartments, type Department } from "../api/departments";
 import { EditExpenseModal } from "../components/EditExpenseModal";
 import { EditIncomeModal } from "../components/EditIncomeModal";
 import { EditTopUpModal } from "../components/EditTopUpModal";
@@ -21,6 +22,7 @@ type Op = "expense" | "income" | "topup";
 interface Row {
   type: Op;
   user_id: string;            // employee для expense / получатель для topup / получатель для income
+  department_id: string;      // подразделение — обязательно для expense/topup (income игнорирует)
   issued_by_id: string;       // только для topup — «кто выдал». Пустое = текущий admin.
   amount: string;
   currency: "KGS" | "USD" | "RUB";
@@ -51,6 +53,7 @@ function makeEmptyRow(): Row {
   return {
     type: "expense",
     user_id: "",
+    department_id: "",
     issued_by_id: "",
     amount: "",
     currency: "KGS",
@@ -69,6 +72,7 @@ export default function BulkImport() {
   const [rows, setRows] = useState<Row[]>([makeEmptyRow()]);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -76,10 +80,11 @@ export default function BulkImport() {
   useEffect(() => {
     listColleagues().then(setColleagues).catch(() => {});
     api<CategoryOpt[]>("/api/categories").then(setCategories).catch(() => {});
+    listDepartments().then(setDepartments).catch(() => {});
   }, []);
 
-  // Защита: страница только для admin
-  if (user && user.role !== "admin") {
+  // Защита: страница только для admin / superadmin
+  if (user && user.role !== "admin" && user.role !== "superadmin") {
     return (
       <div className="container">
         <div className="card" style={{ color: "var(--danger)" }}>
@@ -117,6 +122,8 @@ export default function BulkImport() {
       const amt = parseFloat(r.amount.replace(",", "."));
       if (!isFinite(amt) || amt <= 0) continue;
       if (!r.user_id) continue;
+      // Подразделение обязательно для расходов и выдач (у прихода его нет).
+      if ((r.type === "expense" || r.type === "topup") && !r.department_id) continue;
       counts[r.type] += 1;
       if (r.currency === "KGS") total += amt;
     }
@@ -129,6 +136,7 @@ export default function BulkImport() {
         const amount = parseFloat(r.amount.replace(",", "."));
         if (!isFinite(amount) || amount <= 0) return null;
         if (!r.user_id) return null;
+        if ((r.type === "expense" || r.type === "topup") && !r.department_id) return null;
         const base = {
           type: r.type,
           amount,
@@ -137,6 +145,7 @@ export default function BulkImport() {
         } as any;
         if (r.type === "expense") {
           base.user_id = Number(r.user_id);
+          base.department_id = Number(r.department_id);
           base.category_id = r.category_id ? Number(r.category_id) : null;
           base.description = r.comment || null;
         } else if (r.type === "income") {
@@ -145,6 +154,7 @@ export default function BulkImport() {
           base.description = r.comment || null;
         } else {
           base.user_id = Number(r.user_id);
+          base.department_id = Number(r.department_id);
           base.note = r.comment || null;
           if (r.issued_by_id) base.issued_by_id = Number(r.issued_by_id);
           if (r.category_id) base.category_id = Number(r.category_id);
@@ -205,6 +215,7 @@ export default function BulkImport() {
             <tr>
               <th style={{ width: 110 }}>Тип</th>
               <th style={{ width: 170 }}>Кто / Кому</th>
+              <th style={{ width: 160 }}>Подразделение</th>
               <th style={{ width: 170, textAlign: "right" }}>Сумма</th>
               <th style={{ width: 90 }}>Валюта</th>
               <th style={{ width: 180 }}>Категория / Источник</th>
@@ -238,6 +249,24 @@ export default function BulkImport() {
                       <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
                   </select>
+                </td>
+                <td>
+                  {r.type === "income" ? (
+                    <span className="muted" style={{ fontSize: 12 }}>—</span>
+                  ) : (
+                    <select
+                      value={r.department_id}
+                      onChange={(e) => updateRow(idx, { department_id: e.target.value })}
+                      onKeyDown={(e) => onKeyDown(e, idx)}
+                      style={!r.department_id ? { borderColor: "var(--danger)" } : undefined}
+                      title="Подразделение (обязательно)"
+                    >
+                      <option value="">— подразделение —</option>
+                      {departments.map((d) => (
+                        <option key={d.id} value={d.id}>{d.name}</option>
+                      ))}
+                    </select>
+                  )}
                 </td>
                 <td>
                   <input
@@ -409,7 +438,7 @@ export default function BulkImport() {
         </div>
       )}
 
-      <RecentOperations reloadKey={result?.created || 0} colleagues={colleagues} categories={categories} />
+      <RecentOperations reloadKey={result?.created || 0} colleagues={colleagues} categories={categories} departments={departments} />
     </div>
   );
 }
@@ -544,7 +573,7 @@ function DuplicatesButton() {
   );
 }
 
-function RecentOperations({ reloadKey, colleagues, categories }: { reloadKey: number; colleagues: UserOut[]; categories: CategoryOpt[] }) {
+function RecentOperations({ reloadKey, colleagues, categories, departments }: { reloadKey: number; colleagues: UserOut[]; categories: CategoryOpt[]; departments: Department[] }) {
   const toast = useToast();
   const PAGE_SIZE = 30;
   const [ops, setOps] = useState<RecentOp[] | null>(null);
@@ -557,6 +586,7 @@ function RecentOperations({ reloadKey, colleagues, categories }: { reloadKey: nu
   const [employeeQuery, setEmployeeQuery] = useState("");
   const [employeeId, setEmployeeId] = useState<number | null>(null);
   const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [departmentId, setDepartmentId] = useState<number | null>(null);
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -584,6 +614,7 @@ function RecentOperations({ reloadKey, colleagues, categories }: { reloadKey: nu
       qs.set("offset", String(page * PAGE_SIZE));
       if (employeeId !== null) qs.set("employee_id", String(employeeId));
       if (categoryId !== null) qs.set("category_id", String(categoryId));
+      if (departmentId !== null) qs.set("department_id", String(departmentId));
       // Нормализуем: убираем пробелы (включая неразрывный 00A0) и заменяем запятую на точку.
       // Без этого "20 000" → parseFloat → 20, и фильтр пропускал записи <20k.
       const norm = (s: string) => s.replace(/[\s ]/g, "").replace(",", ".");
@@ -603,10 +634,10 @@ function RecentOperations({ reloadKey, colleagues, categories }: { reloadKey: nu
         .catch((e) => setErr(e.message));
     }, 250);
     return () => clearTimeout(t);
-  }, [reloadKey, bump, page, employeeId, categoryId, amountMin, amountMax, dateFrom, dateTo]);
+  }, [reloadKey, bump, page, employeeId, categoryId, departmentId, amountMin, amountMax, dateFrom, dateTo]);
 
   // При смене фильтров — сбросить пагинацию на первую страницу
-  useEffect(() => { setPage(0); }, [employeeId, categoryId, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
+  useEffect(() => { setPage(0); }, [employeeId, categoryId, departmentId, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
 
   const KIND_LABEL: Record<string, string> = {
     expense: "🧾 Расход",
@@ -655,6 +686,7 @@ function RecentOperations({ reloadKey, colleagues, categories }: { reloadKey: nu
   function resetFilters() {
     setEmployeeQuery(""); setEmployeeId(null);
     setCategoryId(null);
+    setDepartmentId(null);
     setAmountMin(""); setAmountMax("");
     setDateFrom(""); setDateTo("");
   }
@@ -716,6 +748,15 @@ function RecentOperations({ reloadKey, colleagues, categories }: { reloadKey: nu
             <option value="">Все</option>
             {categories.map((c) => (
               <option key={c.id} value={c.id}>{c.display_name || c.name}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label>Подразделение</label>
+          <select value={departmentId ?? ""} onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : null)}>
+            <option value="">Все</option>
+            {departments.map((d) => (
+              <option key={d.id} value={d.id}>{d.name}</option>
             ))}
           </select>
         </div>

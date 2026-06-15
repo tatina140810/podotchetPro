@@ -23,6 +23,7 @@ import MyHistory from "./pages/MyHistory";
 import NewExpense from "./pages/NewExpense";
 import BulkImport from "./pages/BulkImport";
 import Categories from "./pages/Categories";
+import Departments from "./pages/Departments";
 import CategoryReport from "./pages/CategoryReport";
 import EmployeesReport from "./pages/EmployeesReport";
 import BalanceReport from "./pages/BalanceReport";
@@ -52,7 +53,7 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
               На экранах подотчётного суммы всегда в сомах — поэтому скрываем,
               чтобы кнопка не выглядела «нерабочей». */}
           {user.role !== "accountable" && <CurrencyToggle />}
-          {user.role === "admin" && <RateButtonInHeader />}
+          {(user.role === "admin" || user.role === "superadmin") && <RateButtonInHeader />}
           <NotificationBell />
           <span className="muted" style={{ fontSize: 13 }}>{user.name}</span>
           <button className="ghost" style={{ padding: "6px 12px", fontSize: 13 }} onClick={logout}>Выйти</button>
@@ -106,6 +107,7 @@ function RoleRoutes() {
         <Route path="/expenses" element={<Expenses />} />
         <Route path="/expenses/new" element={<NewExpense />} />
         <Route path="/categories" element={<Categories />} />
+        <Route path="/admin/departments" element={<Departments />} />
         <Route path="/reports" element={<Navigate to="/" replace />} />
         <Route path="/reports/categories" element={<Navigate to="/" replace />} />
         <Route path="/reports/employees" element={<EmployeesReport />} />

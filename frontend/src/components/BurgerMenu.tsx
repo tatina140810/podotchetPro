@@ -26,17 +26,23 @@ export function BurgerMenu() {
   // «Сотрудники» убрано у gen_director (директор сам никого не заводит).
   //   Для admin и auditor — оставлено (admin создаёт/редактирует, auditor смотрит).
   // «+ Расход / Передача» убрано у всех — форма встроена сверху страницы расходов.
-  // «Категории» и «Импорт истории» — только admin.
+  // «Категории» и «Импорт истории» — admin и superadmin.
+  // superadmin имеет полный admin-доступ ко всем пунктам.
+  const isAdminLike = user.role === "admin" || user.role === "superadmin";
   const items = isDirectorOrAuditor(user.role)
     ? [
         { to: "/", label: "Отчёт по категориям" },
         { to: "/reports/employees", label: "Отчёт по сотрудникам" },
-        // «Приходы» — только admin и gen_director (НЕ аудитору)
+        // «Приходы» — только admin/superadmin и gen_director (НЕ аудитору)
         ...(user.role !== "auditor" ? [{ to: "/reports/incomes", label: "Приходы" }] : []),
         { to: "/requests", label: "Заявки" },
         { to: "/expenses", label: "Расходы" },
+        // «Подразделения» — admin/superadmin и auditor (управление иерархией).
+        ...(isAdminLike || user.role === "auditor"
+          ? [{ to: "/admin/departments", label: "Подразделения" }]
+          : []),
         ...(user.role !== "gen_director" ? [{ to: "/employees", label: "Сотрудники" }] : []),
-        ...(user.role === "admin"
+        ...(isAdminLike
           ? [
               { to: "/categories", label: "Категории" },
               { to: "/admin/bulk-import", label: "Импорт истории" },

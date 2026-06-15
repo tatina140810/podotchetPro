@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
+import { listDepartments, type Department } from "../api/departments";
 
 interface Category {
   id: number;
@@ -12,18 +13,24 @@ interface Category {
   parent_id: number | null;
   parent_name?: string | null;
   display_name?: string | null;
+  department_id?: number | null;
+  department_name?: string | null;
 }
 
 const PRESET_COLORS = ["#6c5ce7", "#00b894", "#fdcb6e", "#e17055", "#0984e3", "#a29bfe", "#74b9ff", "#636e72"];
 
 export default function Categories() {
   const [list, setList] = useState<Category[] | null>(null);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [editing, setEditing] = useState<Partial<Category> | null>(null);
   const toast = useToast();
 
   const reload = () => api<Category[]>("/api/categories").then(setList);
 
-  useEffect(() => { reload(); }, []);
+  useEffect(() => {
+    reload();
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
 
   // Корневые категории (parent_id = null) — для селекта «Родительская»
   const rootCategories = useMemo(
@@ -60,6 +67,7 @@ export default function Categories() {
             icon: editing.icon,
             is_operational: editing.is_operational ?? false,
             parent_id: editing.parent_id ?? null,
+            department_id: editing.department_id ?? null,
           },
         });
         toast.show("success", "Сохранено");
@@ -72,6 +80,7 @@ export default function Categories() {
             icon: editing.icon || null,
             is_operational: editing.is_operational ?? false,
             parent_id: editing.parent_id ?? null,
+            department_id: editing.department_id ?? null,
           },
         });
         toast.show("success", editing.parent_id ? "Подкатегория добавлена" : "Категория добавлена");
@@ -107,6 +116,11 @@ export default function Categories() {
                   background: root.color || "#6c5ce7", display: "inline-block",
                 }} />
                 <span style={{ fontWeight: 600 }}>{root.name}</span>
+                {root.department_name && (
+                  <span className="badge" style={{ fontSize: 11, background: "rgba(108,92,231,0.18)", color: "#a29bfe" }}>
+                    {root.department_name}
+                  </span>
+                )}
                 {root.icon && <span className="muted" style={{ fontSize: 12 }}>{root.icon}</span>}
                 {root.is_operational && (
                   <span className="badge approved" style={{ fontSize: 11 }}>операционная</span>
@@ -134,6 +148,11 @@ export default function Categories() {
                         background: sub.color || root.color || "#6c5ce7", display: "inline-block",
                       }} />
                       <span>{sub.name}</span>
+                      {sub.department_name && (
+                        <span className="badge" style={{ fontSize: 11, background: "rgba(108,92,231,0.18)", color: "#a29bfe" }}>
+                          {sub.department_name}
+                        </span>
+                      )}
                       {sub.icon && <span className="muted" style={{ fontSize: 12 }}>{sub.icon}</span>}
                       {sub.is_operational && (
                         <span className="badge approved" style={{ fontSize: 11 }}>операционная</span>
@@ -204,6 +223,18 @@ export default function Categories() {
                 <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
                   Можно вложить только в корневую (2 уровня вложенности).
                 </div>
+              </div>
+              <div>
+                <label>Подразделение (необязательно)</label>
+                <select
+                  value={editing.department_id ?? ""}
+                  onChange={(e) => setEditing({ ...editing, department_id: e.target.value ? Number(e.target.value) : null })}
+                >
+                  <option value="">Общая (для всех подразделений)</option>
+                  {departments.map((d) => (
+                    <option key={d.id} value={d.id}>{d.name}</option>
+                  ))}
+                </select>
               </div>
               <div>
                 <label>Иконка (эмодзи или название, необязательно)</label>

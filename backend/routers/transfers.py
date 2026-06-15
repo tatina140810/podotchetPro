@@ -12,7 +12,7 @@ from auth import (
     require_director_level,
 )
 from database import get_db
-from models import BalanceTopUp, Category, Expense, MoneyTransfer, Notification, User
+from models import BalanceTopUp, Category, Department, Expense, MoneyTransfer, Notification, User
 from schemas import (
     BalanceTopUpCreate,
     BalanceTopUpOut,
@@ -39,6 +39,7 @@ def _topup_to_out(t: BalanceTopUp) -> BalanceTopUpOut:
     out.admin_name = t.admin.name if t.admin else None
     out.user_name = t.user.name if t.user else None
     out.category_name = t.category.name if t.category else None
+    out.department_name = t.department.name if t.department else None
     return out
 
 
@@ -74,6 +75,7 @@ def _auto_expense_for_topup(db: Session, topup: BalanceTopUp) -> None:
         org_id=topup.org_id,
         employee_id=topup.user_id,
         category_id=topup.category_id,
+        department_id=topup.department_id,
         amount=topup.amount,
         currency=topup.currency,
         amount_kgs=topup.amount_kgs,
@@ -193,6 +195,11 @@ def topup_user(
     if not target or target.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
 
+    if payload.department_id is not None:
+        dep = db.get(Department, payload.department_id)
+        if not dep or dep.org_id != admin.org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+
     from datetime import datetime as _dt
     from decimal import Decimal as _D
     # Считаем KGS-эквивалент. Для KGS = amount; для USD/RUB = amount × курс.
@@ -218,6 +225,7 @@ def topup_user(
         note=payload.note,
         date=payload.date or _dt.utcnow(),
         category_id=payload.category_id,
+        department_id=payload.department_id,
     )
     db.add(t)
     db.flush()  # нужен t.id и связь категории до _auto_expense_for_topup

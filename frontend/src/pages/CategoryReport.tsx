@@ -2,6 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
+import { listDepartments, type Department } from "../api/departments";
 
 interface ExpenseItem {
   id: number;
@@ -16,6 +17,7 @@ interface ExpenseItem {
 interface CategoryRow {
   category_id: number | null;
   category: string;
+  department: string | null;
   amount: number;
   count: number;
   percent: number;
@@ -51,6 +53,12 @@ export default function CategoryReport() {
   const [err, setErr] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [departmentId, setDepartmentId] = useState<number | "">("");
+
+  useEffect(() => {
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
 
   function toggle(key: string) {
     setExpanded((prev) => {
@@ -62,7 +70,8 @@ export default function CategoryReport() {
 
   function reload() {
     setErr(null);
-    api<Report>(`/api/reports/categories?year=${year}&month=${month}&currency=${display}&_t=${Date.now()}`)
+    const dep = departmentId ? `&department_id=${departmentId}` : "";
+    api<Report>(`/api/reports/categories?year=${year}&month=${month}&currency=${display}${dep}&_t=${Date.now()}`)
       .then(setData)
       .catch((e) => setErr(e.message));
   }
@@ -71,7 +80,7 @@ export default function CategoryReport() {
     setData(null);
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, display]);
+  }, [year, month, display, departmentId]);
 
   async function onExport() {
     setExporting(true);
@@ -98,6 +107,7 @@ export default function CategoryReport() {
             <thead>
               <tr>
                 <th>Категория</th>
+                <th>Подразделение</th>
                 <th style={{ textAlign: "right" }}>Сумма</th>
                 <th style={{ textAlign: "right" }}>% от общего</th>
                 <th style={{ textAlign: "right" }}>Операций</th>
@@ -105,7 +115,7 @@ export default function CategoryReport() {
             </thead>
             <tbody>
               {rows.length === 0 && (
-                <tr><td colSpan={4} className="muted">Пусто</td></tr>
+                <tr><td colSpan={5} className="muted">Пусто</td></tr>
               )}
               {rows.map((r) => {
                 const key = `${prefix}-${r.category_id ?? "none"}`;
@@ -116,6 +126,7 @@ export default function CategoryReport() {
                         <span style={{ marginRight: 6 }}>{expanded.has(key) ? "▼" : "▶"}</span>
                         {r.category}
                       </td>
+                      <td className="muted" style={{ fontSize: 13 }}>{r.department || "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>
                         {r.amount.toLocaleString("ru-RU")} {sym}
                       </td>
@@ -124,7 +135,7 @@ export default function CategoryReport() {
                     </tr>
                     {expanded.has(key) && (
                       <tr>
-                        <td colSpan={4} style={{ background: "rgba(255,255,255,0.03)", padding: 12 }}>
+                        <td colSpan={5} style={{ background: "rgba(255,255,255,0.03)", padding: 12 }}>
                           <table>
                             <thead>
                               <tr>
@@ -158,7 +169,7 @@ export default function CategoryReport() {
                 );
               })}
               <tr style={{ background: "rgba(99,102,241,0.1)", fontWeight: 700 }}>
-                <td>Итого {title.toLowerCase()}:</td>
+                <td colSpan={2}>Итого {title.toLowerCase()}:</td>
                 <td style={{ textAlign: "right" }}>{subtotal.toLocaleString("ru-RU")} {sym}</td>
                 <td colSpan={2}></td>
               </tr>
@@ -194,6 +205,15 @@ export default function CategoryReport() {
           <div>
             <label>Год</label>
             <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 90 }} />
+          </div>
+          <div>
+            <label>Подразделение</label>
+            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : "")}>
+              <option value="">Все</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
           </div>
           <div className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
             Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b>. Без имён сотрудников — только цифры.

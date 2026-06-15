@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_admin
 from database import get_db
-from models import BalanceTopUp, Category, Expense, Income, MoneyRequest, User
+from models import BalanceTopUp, Category, Department, Expense, Income, MoneyRequest, User
 from schemas import (
     BulkImportError,
     BulkImportItem,
@@ -18,6 +18,7 @@ from schemas import (
     BulkImportResult,
 )
 from services.exchange import get_current_rate
+from services.permissions import hidden_user_ids
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -35,6 +36,16 @@ def _resolve_amount_kgs(
     return amount * rate
 
 
+def _resolve_department(db: Session, admin: User, item: BulkImportItem) -> int:
+    """Подразделение обязательно для expense/topup в импорте. Возвращает его id."""
+    if item.department_id is None:
+        raise ValueError("department_id обязателен")
+    dep = db.get(Department, item.department_id)
+    if not dep or dep.org_id != admin.org_id:
+        raise ValueError(f"Подразделение id={item.department_id} не найдено")
+    return dep.id
+
+
 def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
     if item.user_id is None:
         raise ValueError("user_id обязателен для expense")
@@ -45,6 +56,7 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         cat = db.get(Category, item.category_id)
         if not cat or cat.org_id != admin.org_id:
             raise ValueError(f"Категория id={item.category_id} не найдена")
+    department_id = _resolve_department(db, admin, item)
     amount_kgs = _resolve_amount_kgs(db, admin.org_id, item.amount, item.currency)
     if amount_kgs is None:
         raise ValueError(f"Курс {item.currency}/KGS не установлен")
@@ -52,6 +64,7 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         org_id=admin.org_id,
         employee_id=employee.id,
         category_id=item.category_id,
+        department_id=department_id,
         amount=item.amount,
         currency=item.currency,
         amount_kgs=amount_kgs,
@@ -113,6 +126,7 @@ def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
         cat = db.get(Category, item.category_id)
         if not cat or cat.org_id != admin.org_id:
             raise ValueError(f"Категория id={item.category_id} не найдена")
+    department_id = _resolve_department(db, admin, item)
     t = BalanceTopUp(
         org_id=admin.org_id,
         admin_id=issued_by_id,
@@ -123,6 +137,7 @@ def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
         note=item.note,
         date=item.date or datetime.utcnow(),
         category_id=item.category_id,
+        department_id=department_id,
     )
     db.add(t)
     db.flush()
@@ -262,6 +277,7 @@ def recent_operations(
     offset: int = 0,
     employee_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     amount_min: Optional[float] = None,
     amount_max: Optional[float] = None,
     date_from: Optional[datetime] = None,
@@ -284,8 +300,9 @@ def recent_operations(
     iq = db.query(Income).filter(Income.org_id == admin.org_id)
     tq = db.query(BalanceTopUp).filter(BalanceTopUp.org_id == admin.org_id)
     rq = db.query(MoneyRequest).filter(MoneyRequest.org_id == admin.org_id)
-    # Флаг: показывать ли Income/Requests (исключаем когда фильтр по категории — у них её нет)
-    include_income = category_id is None
+    # Флаг: показывать ли Income/Requests (исключаем когда фильтр по категории — у них её нет;
+    # Income исключаем и при фильтре по подразделению — у прихода нет подразделения)
+    include_income = category_id is None and department_id is None
     include_requests = category_id is None
 
     if employee_id is not None:
@@ -302,6 +319,17 @@ def recent_operations(
     if category_id is not None:
         eq = eq.filter(Expense.category_id == category_id)
         tq = tq.filter(BalanceTopUp.category_id == category_id)
+    if department_id is not None:
+        eq = eq.filter(Expense.department_id == department_id)
+        tq = tq.filter(BalanceTopUp.department_id == department_id)
+        rq = rq.filter(MoneyRequest.department_id == department_id)
+    # Фича 2: операции конфиденциальных сотрудников скрыты (для admin/auditor; superadmin видит всё).
+    hidden = hidden_user_ids(db, admin)
+    if hidden:
+        eq = eq.filter(Expense.employee_id.notin_(hidden))
+        iq = iq.filter(Income.received_by_id.notin_(hidden))
+        tq = tq.filter(BalanceTopUp.admin_id.notin_(hidden), BalanceTopUp.user_id.notin_(hidden))
+        rq = rq.filter(MoneyRequest.requester_id.notin_(hidden), MoneyRequest.approver_id.notin_(hidden))
     if amount_min is not None:
         eq = eq.filter(Expense.amount >= amount_min)
         iq = iq.filter(Income.amount >= amount_min)

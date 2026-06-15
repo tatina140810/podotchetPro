@@ -27,8 +27,8 @@ export default function Expenses() {
   const [exporting, setExporting] = useState(false);
 
   const canReview = isDirectorLevel(user?.role);
-  const canVerify = user?.role === "admin" || user?.role === "auditor";
-  const canEdit = user?.role === "admin";
+  const canVerify = user?.role === "admin" || user?.role === "auditor" || user?.role === "superadmin";
+  const canEdit = user?.role === "admin" || user?.role === "superadmin";
   const [editingExpense, setEditingExpense] = useState<any>(null);
   const [viewingExpense, setViewingExpense] = useState<any>(null);
   const [showIncomeModal, setShowIncomeModal] = useState(false);
@@ -327,7 +327,7 @@ export default function Expenses() {
           expense={viewingExpense}
           usdKgs={usdKgs}
           canEdit={canEdit}
-          canAttach={user?.role === "admin" || user?.role === "gen_director"}
+          canAttach={user?.role === "admin" || user?.role === "gen_director" || user?.role === "superadmin"}
           onClose={() => setViewingExpense(null)}
           onEdit={() => { setEditingExpense(viewingExpense); setViewingExpense(null); }}
           onChanged={load}

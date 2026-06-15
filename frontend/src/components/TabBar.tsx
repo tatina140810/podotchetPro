@@ -5,7 +5,7 @@ export function TabBar() {
   const { user } = useAuth();
   if (!user) return null;
 
-  const tabs = user.role === "admin"
+  const tabs = (user.role === "admin" || user.role === "superadmin")
     ? [
         { to: "/", label: "Главная" },
         { to: "/employees", label: "Сотрудники" },

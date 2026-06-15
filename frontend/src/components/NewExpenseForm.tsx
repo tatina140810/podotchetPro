@@ -16,6 +16,7 @@ import {
   type UserOut,
 } from "../context/AuthContext";
 import { listColleagues } from "../api/users";
+import { listDepartments, type Department } from "../api/departments";
 import { createTransfer } from "../api/transfers";
 
 type Kind = "expense" | "transfer";
@@ -34,10 +35,12 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
   const [cats, setCats] = useState<any[]>([]);
   const [spec, setSpec] = useState<any>(null);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   // Admin mode: вносим от лица другого пользователя. "" = себя.
   const [onBehalfOf, setOnBehalfOf] = useState<number | "">("");
   const [form, setForm] = useState({
     category_id: "" as any,
+    department_id: "" as any,
     to_user_id: "" as number | "",
     transfer_to_user_id: "" as number | "",
     amount: "" as any,
@@ -54,6 +57,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     api(`/api/specs/${me.id}`).then(setSpec).catch(() => {});
     api("/api/categories").then(setCats).catch(() => {});
     listColleagues().then(setColleagues).catch(() => {});
+    listDepartments().then(setDepartments).catch(() => {});
   }, [me?.id]);
 
   const recipients = useMemo(() => {
@@ -63,12 +67,21 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
   }, [colleagues, me]);
 
   const allowedIds: number[] | null = spec?.allowed_categories || null;
-  const visibleCats = allowedIds ? cats.filter((c: any) => allowedIds.includes(c.id)) : cats;
+  const visibleCats = useMemo(() => {
+    let out = allowedIds ? cats.filter((c: any) => allowedIds.includes(c.id)) : cats;
+    // После выбора подразделения — показываем общие (department_id=null) + его категории.
+    if (form.department_id) {
+      const did = Number(form.department_id);
+      out = out.filter((c: any) => c.department_id == null || c.department_id === did);
+    }
+    return out;
+  }, [cats, allowedIds, form.department_id]);
   const requiresReceipt = !!spec?.requires_receipt;
 
   function resetForm() {
     setForm({
       category_id: "",
+      department_id: "",
       to_user_id: "",
       transfer_to_user_id: "",
       amount: "",
@@ -80,7 +93,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     // onBehalfOf не сбрасываем — admin часто вносит подряд несколько записей за одного
   }
 
-  const isAdmin = me?.role === "admin";
+  const isAdmin = me?.role === "admin" || me?.role === "superadmin";
   const onBehalfName = onBehalfOf
     ? colleagues.find((c) => c.id === onBehalfOf)?.name
     : null;
@@ -107,10 +120,15 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       toast.show("error", "Передавать получателю можно только сомы (KGS)");
       return false;
     }
+    if (!form.department_id) {
+      toast.show("error", "Выберите подразделение");
+      return false;
+    }
     await api("/api/expenses", {
       method: "POST",
       body: {
         category_id: form.category_id ? Number(form.category_id) : null,
+        department_id: Number(form.department_id),
         amount: Number(form.amount),
         currency: form.currency,
         description: form.description || null,
@@ -216,6 +234,21 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       </div>
 
       <form onSubmit={submit} className="card grid">
+        {kind === "expense" && (
+          <div>
+            <label>Подразделение</label>
+            <select
+              value={form.department_id}
+              onChange={(e) => setForm({ ...form, department_id: e.target.value, category_id: "" })}
+              required
+            >
+              <option value="">— выберите —</option>
+              {departments.map((d) => (
+                <option key={d.id} value={d.id}>{d.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
         {kind === "transfer" ? (
           <div>
             <label>Кому передать</label>

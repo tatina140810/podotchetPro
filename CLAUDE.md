@@ -46,17 +46,39 @@ deploy.sh            # деплой
 
 ## Роли (`User.role`)
 
-- `admin` — техническая супер-роль, всё может; единственный, кто вносит расход
-  «от лица» другого (`recorded_by_id`), правит чужие записи, курсы валют.
+- `superadmin` — суперроль над всем (Татина). По правам ≥ `admin`: входит во все
+  списки ролей (`ADMIN_ROLES`/`DIRECTOR_LEVEL_ROLES`/`DIRECTOR_OR_AUDITOR_ROLES` в
+  `auth.py`). Единственный, кто видит конфиденциальных сотрудников наравне с
+  `gen_director` и может менять флаг `is_confidential` / назначать роль `superadmin`.
+- `admin` — техническая супер-роль; вносит расход «от лица» другого
+  (`recorded_by_id`), правит чужие записи, курсы валют. **НЕ** видит конфиденциальных.
 - `gen_director` — владелец бизнеса, полный финансовый контроль (director-level).
+  Видит конфиденциальных.
 - `auditor` — только чтение + верификация расходов (`is_verified`), без правок.
+  **НЕ** видит конфиденциальных.
 - `accountable` (**подотчётный**) — рядовой сотрудник. Видит себя + своих прямых
   подчинённых (`supervisor_id`, рекурсивно через `services/permissions.visible_user_ids`).
   Создаёт расходы/переводы/заявки, заводит своих подотчётных.
 
-`is_director_level` = admin | gen_director. Иерархия подотчётных — через
-`User.supervisor_id`. Лимиты и требования — в `EmployeeSpec` (monthly/single_limit,
-allowed_categories, requires_receipt, requires_approval).
+`is_director_level` = superadmin | admin | gen_director. `role` — свободный
+`String(20)` (без ENUM/CHECK), поэтому добавление роли НЕ требует миграции. Иерархия
+подотчётных — через `User.supervisor_id`. Лимиты и требования — в `EmployeeSpec`.
+
+### Конфиденциальные сотрудники (`User.is_confidential`)
+
+Флаг `is_confidential` скрывает сотрудника от всех, КРОМЕ `superadmin`, `gen_director`
+и его самого. Скрываются его расходы, баланс, выдачи, присутствие в списках/dropdown,
+прямой доступ к карточке/чекам/xlsx. Центральная логика:
+
+- `auth.can_see_confidential(user)` = роль in (`superadmin`, `gen_director`).
+- `services/permissions.hidden_user_ids(db, me)` — set id для скрытия; **всегда**
+  исключает `me.id` (конфиденциальный видит себя). Применён в `routers/expenses`,
+  `users`, `reports` (+ xlsx), `admin/recent-operations`.
+- Менять `is_confidential` может только `superadmin` (иначе `PATCH /users` → 403);
+  чекбокс в карточке сотрудника виден только `superadmin`.
+- **Атрибуция получателю работает сама:** выдача конфиденциального → `_auto_expense_for_topup`
+  создаёт `Expense` с `employee_id`=получатель, поэтому в отчётах расход показывается
+  от лица получателя, не конфиденциального.
 
 ## Ключевые сущности (models.py)
 

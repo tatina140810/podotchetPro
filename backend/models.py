@@ -33,6 +33,47 @@ class Organization(Base):
 
     users: Mapped[list["User"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
     categories: Mapped[list["Category"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
+    departments: Mapped[list["Department"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
+
+
+class Department(Base):
+    """Подразделение — уровень иерархии над сотрудниками и категориями
+    (Холдинг → Подразделения → Сотрудники/Категории → Расходы).
+    Примеры: «AVA Pay», «Gold Фонд», «8 этаж». Уникально по (org_id, name)."""
+    __tablename__ = "departments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    organization: Mapped[Organization] = relationship(back_populates="departments")
+    employees: Mapped[list["User"]] = relationship(
+        "User", secondary="employee_departments", back_populates="departments"
+    )
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_departments_org_name"),
+    )
+
+
+class EmployeeDepartment(Base):
+    """M2M: сотрудник может состоять в нескольких подразделениях (необязательно)."""
+    __tablename__ = "employee_departments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    employee_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    department_id: Mapped[int] = mapped_column(
+        ForeignKey("departments.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("employee_id", "department_id", name="uq_employee_departments_pair"),
+    )
 
 
 class User(Base):
@@ -47,6 +88,11 @@ class User(Base):
     # gen_director | auditor | accountable | admin
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="accountable")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Конфиденциальный сотрудник: его расходы/баланс/выдачи скрыты от всех,
+    # кроме superadmin, gen_director и его самого. Ставит только superadmin.
+    is_confidential: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
     # Непосредственный руководитель: кому accountable отправляет заявки и от кого получает переводы.
     # Раньше называлось created_by_id; миграция rename сохраняет данные.
     supervisor_id: Mapped[Optional[int]] = mapped_column(
@@ -66,6 +112,10 @@ class User(Base):
     )
     subordinates: Mapped[list["User"]] = relationship(
         "User", back_populates="supervisor", foreign_keys=[supervisor_id]
+    )
+    # Подразделения сотрудника (M2M, необязательно). accountable видит/выбирает только свои.
+    departments: Mapped[list["Department"]] = relationship(
+        "Department", secondary="employee_departments", back_populates="employees"
     )
 
 
@@ -110,11 +160,17 @@ class Category(Base):
     parent_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Подразделение категории. NULL = общая категория (видна во всех подразделениях).
+    # У старых категорий до миграции — NULL.
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     organization: Mapped[Organization] = relationship(back_populates="categories")
     parent: Mapped[Optional["Category"]] = relationship(
         remote_side="Category.id", foreign_keys=[parent_id]
     )
+    department: Mapped[Optional["Department"]] = relationship(foreign_keys=[department_id])
 
 
 class Advance(Base):
@@ -183,6 +239,11 @@ class Expense(Base):
     source_request_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("money_requests.id", ondelete="SET NULL")
     )
+    # Подразделение расхода. Обязательно для новых записей (форсится в API);
+    # NULL только у старых записей до миграции ("Не указано").
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     spent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -195,6 +256,7 @@ class Expense(Base):
     funded_by: Mapped[Optional[User]] = relationship(foreign_keys=[funded_by_id])
     category: Mapped[Optional[Category]] = relationship()
     advance: Mapped[Optional[Advance]] = relationship()
+    department: Mapped[Optional["Department"]] = relationship(foreign_keys=[department_id])
     # Прикреплённые чеки/документы. Может быть несколько; докладываются даже после
     # проверки расхода (см. routers/expenses.py). cascade — чтобы удалялись с расходом.
     receipts: Mapped[list["ExpenseReceipt"]] = relationship(
@@ -327,6 +389,10 @@ class MoneyRequest(Base):
     expense_category_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
     )
+    # Подразделение заявки. Обязательно для новых; NULL у старых ("Не указано").
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
@@ -336,6 +402,7 @@ class MoneyRequest(Base):
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
     approver: Mapped[User] = relationship(foreign_keys=[approver_id])
     expense_category: Mapped[Optional[Category]] = relationship(foreign_keys=[expense_category_id])
+    department: Mapped[Optional["Department"]] = relationship(foreign_keys=[department_id])
     items: Mapped[list["MoneyRequestItem"]] = relationship(
         back_populates="request", cascade="all,delete-orphan"
     )
@@ -409,11 +476,16 @@ class BalanceTopUp(Base):
     category_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
     )
+    # Подразделение пополнения. Обязательно для новых; NULL у старых ("Не указано").
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     admin: Mapped[User] = relationship(foreign_keys=[admin_id])
     user: Mapped[User] = relationship(foreign_keys=[user_id])
     category: Mapped[Optional[Category]] = relationship()
+    department: Mapped[Optional["Department"]] = relationship(foreign_keys=[department_id])
 
 
 class PushSubscription(Base):

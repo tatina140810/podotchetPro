@@ -58,18 +58,23 @@ def get_current_user(
 
 
 def require_admin(user: User = Depends(get_current_user)) -> User:
-    if user.role != "admin":
+    if user.role not in ("admin", "superadmin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступ только для администратора")
     return user
 
 
 # ===================== Расширенные ролевые проверки =====================
 # Иерархия прав:
-#   admin (техническая суперроль) ⊇ gen_director ⊇ auditor (для просмотра)
+#   superadmin (Татина) ⊇ admin ⊇ gen_director ⊇ auditor (для просмотра)
 #   accountable — обычный подотчётный сотрудник
+# superadmin — техническая суперроль над всем; добавлена во все списки наравне с admin.
 
-DIRECTOR_LEVEL_ROLES = ("admin", "gen_director")
-DIRECTOR_OR_AUDITOR_ROLES = ("admin", "gen_director", "auditor")
+ADMIN_ROLES = ("admin", "superadmin")
+DIRECTOR_LEVEL_ROLES = ("admin", "gen_director", "superadmin")
+DIRECTOR_OR_AUDITOR_ROLES = ("admin", "gen_director", "auditor", "superadmin")
+# Кто видит конфиденциальных сотрудников (Фича 2): superadmin и gen_director.
+# admin/auditor сюда НЕ входят (видят меньше, чем по обычным правам).
+CONFIDENTIAL_VIEWER_ROLES = ("superadmin", "gen_director")
 
 
 def is_director_level(user: User) -> bool:
@@ -78,6 +83,13 @@ def is_director_level(user: User) -> bool:
 
 def is_director_or_auditor(user: User) -> bool:
     return user.role in DIRECTOR_OR_AUDITOR_ROLES
+
+
+def can_see_confidential(user: User) -> bool:
+    """Роль видит данные конфиденциальных сотрудников целиком (Фича 2).
+    Сам конфиденциальный сотрудник видит себя — это проверяется в эндпоинтах
+    отдельно (через me.id), здесь только роль."""
+    return user.role in CONFIDENTIAL_VIEWER_ROLES
 
 
 def require_director_level(user: User = Depends(get_current_user)) -> User:
@@ -93,6 +105,6 @@ def require_director_or_auditor(user: User = Depends(get_current_user)) -> User:
 
 
 def require_auditor(user: User = Depends(get_current_user)) -> User:
-    if user.role not in ("admin", "auditor"):
+    if user.role not in ("admin", "auditor", "superadmin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Только аудитор или admin")
     return user

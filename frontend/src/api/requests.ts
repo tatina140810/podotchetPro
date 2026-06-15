@@ -34,6 +34,8 @@ export interface MoneyRequest {
   is_expense_on_approve: boolean;
   expense_category_id: number | null;
   expense_category_name: string | null;
+  department_id: number | null;
+  department_name: string | null;
   created_at: string;
   updated_at: string;
   approved_at: string | null;
@@ -60,6 +62,7 @@ export function getRequest(id: number): Promise<MoneyRequest> {
 export function createRequest(payload: {
   title: string;
   approver_id: number;
+  department_id?: number | null;
   currency?: string;
   items: MoneyRequestItemIn[];
   is_expense_on_approve?: boolean;

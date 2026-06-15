@@ -87,6 +87,7 @@ export function createUser(payload: {
   password: string;
   role: Role;
   supervisor_id?: number | null;
+  department_ids?: number[];
 }): Promise<UserOut> {
   return api<UserOut>("/api/users", { method: "POST", body: payload });
 }
@@ -100,6 +101,7 @@ export function updateUser(
     is_active?: boolean;
     supervisor_id?: number | null;
     password?: string;
+    department_ids?: number[];
   }
 ): Promise<UserOut> {
   return api<UserOut>(`/api/users/${userId}`, { method: "PATCH", body: payload });

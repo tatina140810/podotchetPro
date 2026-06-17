@@ -142,12 +142,20 @@ export default function EmployeeProfile() {
               <div className="muted" style={{ fontSize: 13 }}>
                 {ROLE_RU[emp.role as Role] || emp.role}{emp.department ? ` · ${emp.department}` : ""}
               </div>
-              <Link
-                to={`/requests/recurring?user_id=${id}&name=${encodeURIComponent(emp.name)}`}
-                style={{ fontSize: 13 }}
-              >
-                Регулярные обязательства →
-              </Link>
+              <div className="row" style={{ gap: 12, flexWrap: "wrap" }}>
+                <Link
+                  to={`/requests/recurring?user_id=${id}&name=${encodeURIComponent(emp.name)}`}
+                  style={{ fontSize: 13 }}
+                >
+                  Регулярные обязательства →
+                </Link>
+                <Link
+                  to={`/reports/incomes?tab=expected&user_id=${id}&name=${encodeURIComponent(emp.name)}`}
+                  style={{ fontSize: 13 }}
+                >
+                  Ожидаемые пополнения →
+                </Link>
+              </div>
             </div>
           </div>
           <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>

@@ -17,6 +17,7 @@ from routers import (
     chat,
     dashboard,
     exchange_rates,
+    expected_incomes,
     expenses,
     income,
     income_sources,
@@ -79,6 +80,7 @@ app.include_router(push.router)
 app.include_router(exchange_rates.router)
 app.include_router(income.router)
 app.include_router(income_sources.router)
+app.include_router(expected_incomes.router)
 app.include_router(recurring_obligations.router)
 app.include_router(settings_router.router)
 app.include_router(admin_router.router)

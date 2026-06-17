@@ -1,7 +1,9 @@
 import { Fragment, useEffect, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useDisplayCurrency } from "../context/CurrencyContext";
 import { useSettings } from "../context/SettingsContext";
+import { ExpectedIncomes } from "./ExpectedIncomes";
 
 interface IncomeItem {
   id: number;
@@ -47,6 +49,15 @@ export default function IncomeReport() {
   const { display } = useDisplayCurrency();
   const { flag } = useSettings();
   const showBySource = flag("income_source_report");
+  const [params] = useSearchParams();
+  // Read-only просмотр ожидаемых пополнений конкретного сотрудника (из карточки).
+  const viewUserId = params.get("user_id") ? Number(params.get("user_id")) : undefined;
+  const viewName = params.get("name");
+  // Таб: "incomes" (отчёт по приходам org) | "expected" (ожидаемые пополнения).
+  // При просмотре чужого сотрудника — только таб ожидаемых (read-only).
+  const [tab, setTab] = useState<"incomes" | "expected">(
+    viewUserId ? "expected" : (params.get("tab") === "expected" ? "expected" : "incomes")
+  );
   const [data, setData] = useState<Report | null>(null);
   const [err, setErr] = useState<string | null>(null);
   // Какие источники раскрыты (ключ совпадает с группировкой бэкенда).
@@ -103,9 +114,25 @@ export default function IncomeReport() {
   return (
     <div className="container">
       <div className="row between" style={{ marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
-        <h1 className="h1" style={{ margin: 0 }}>Приходы</h1>
+        <h1 className="h1" style={{ margin: 0 }}>
+          {viewUserId ? `Ожидаемые пополнения${viewName ? ` — ${viewName}` : ""}` : "Приходы"}
+        </h1>
+        {!viewUserId && (
+          <div className="row" style={{ gap: 6 }}>
+            <button type="button" className={tab === "incomes" ? "" : "ghost"} onClick={() => setTab("incomes")}>
+              Приходы
+            </button>
+            <button type="button" className={tab === "expected" ? "" : "ghost"} onClick={() => setTab("expected")}>
+              Ожидаемые пополнения
+            </button>
+          </div>
+        )}
       </div>
 
+      {viewUserId ? (
+        <ExpectedIncomes readOnly userId={viewUserId} />
+      ) : (
+      <>
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div>
@@ -127,6 +154,10 @@ export default function IncomeReport() {
         </div>
       </div>
 
+      {tab === "expected" ? (
+        <ExpectedIncomes onConverted={reload} />
+      ) : (
+      <>
       {err && <div className="card" style={{ color: "var(--danger)" }}>Ошибка: {err}</div>}
       {!data && !err && <div className="muted">Загрузка...</div>}
 
@@ -250,6 +281,10 @@ export default function IncomeReport() {
             </table>
           </div>
         </>
+      )}
+      </>
+      )}
+      </>
       )}
     </div>
   );

@@ -879,5 +879,46 @@ class ReorderPayload(BaseModel):
     ids: list[int]
 
 
+# ===================== EXPECTED INCOMES (ожидаемые пополнения) =====================
+
+_EXP_PERIODICITY = "^(one_time|monthly|weekly)$"
+
+
+class ExpectedIncomeCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    amount: Decimal = Field(..., gt=0)
+    currency: str = Field(default="KGS", pattern="^(KGS|USD)$")
+    expected_date: Optional[datetime] = None
+    periodicity: str = Field(default="one_time", pattern=_EXP_PERIODICITY)
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ExpectedIncomeUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    amount: Optional[Decimal] = Field(default=None, gt=0)
+    currency: Optional[str] = Field(default=None, pattern="^(KGS|USD)$")
+    expected_date: Optional[datetime] = None
+    periodicity: Optional[str] = Field(default=None, pattern=_EXP_PERIODICITY)
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
+class ExpectedIncomeOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    name: str
+    amount: Decimal
+    currency: str
+    amount_kgs: Optional[Decimal] = None  # КГС-эквивалент по текущему курсу (для отображения)
+    expected_date: Optional[datetime] = None
+    periodicity: str
+    comment: Optional[str] = None
+    status: str
+    received_at: Optional[datetime] = None
+    created_income_id: Optional[int] = None
+    created_at: datetime
+
+
 # Forward refs
 TokenResponse.model_rebuild()

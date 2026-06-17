@@ -602,6 +602,45 @@ class RecurringObligation(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
 
+class ExpectedIncome(Base):
+    """Ожидаемое пополнение — сумма, которую сотрудник планирует получить
+    (зарплата, возврат долга, регулярный доход). По галочке «получено» создаётся
+    реальный Income. Данные на уровне пользователя.
+    - periodicity one_time → после получения статус received (архив);
+    - monthly/weekly → после получения создаётся Income, статус остаётся pending,
+      expected_date сдвигается на следующий период."""
+    __tablename__ = "expected_incomes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="KGS", server_default="KGS"
+    )
+    expected_date: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+    # one_time | monthly | weekly
+    periodicity: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="one_time", server_default="one_time"
+    )
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    # pending | received
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending", index=True
+    )
+    received_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Последний созданный по этой записи приход (для one_time — единственный).
+    created_income_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("incomes.id", ondelete="SET NULL"), nullable=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class ExchangeRate(Base):
     """Курс конвертации валют в рамках org. Берём последний по `date` как текущий.
     Сейчас используется только пара USD/KGS; модель универсальна на будущее."""

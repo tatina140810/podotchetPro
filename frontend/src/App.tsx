@@ -49,8 +49,9 @@ function ProtectedShell({ children }: { children: React.ReactNode }) {
       <header className="app-header">
         <div className="row" style={{ gap: 12, alignItems: "center" }}>
           <BurgerMenu />
-          <div className="brand">
-            PodotchetPRO <small>{org?.name || ""}</small>
+          <div className="brand" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <img src="/logo.png" alt="PodotchetPRO" style={{ height: 30, display: "block" }} />
+            {org?.name ? <small>{org.name}</small> : null}
           </div>
         </div>
         <div className="row" style={{ gap: 10 }}>

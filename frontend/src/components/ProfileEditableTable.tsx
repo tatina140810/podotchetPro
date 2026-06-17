@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useToast } from "./Toast";
 import { profileApi } from "../api/employees";
 import type { UserOut } from "../context/AuthContext";
@@ -173,7 +173,10 @@ export function ProfileEditableTable(p: Props) {
     ? p.departments.filter((d) => p.employeeDeptIds.includes(d.id))
     : p.departments;
 
-  function FormCells({ row }: { row: any | null }) {
+  // ВАЖНО: это обычная функция, а НЕ вложенный компонент (<FormCells/>).
+  // Если рендерить как компонент, он пересоздаётся на каждый ре-рендер и input
+  // теряет фокус после каждого символа. Поэтому вызываем formRow(row) напрямую.
+  const formRow = (row: any | null) => {
     const set = (k: string, v: any) => setForm((f: any) => ({ ...f, [k]: v }));
     const dateInp = <input type="date" value={form.date || ""} onChange={(e) => set("date", e.target.value)} />;
     const amountInp = <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => set("amount", e.target.value)} style={{ textAlign: "right", width: 90 }} />;
@@ -253,11 +256,11 @@ export function ProfileEditableTable(p: Props) {
           <table>
             <thead><tr>{cols.map((h, i) => <th key={i}>{h}</th>)}<th></th></tr></thead>
             <tbody>
-              {isAdding && <FormCells row={null} />}
+              {isAdding && formRow(null)}
               {p.rows.length === 0 && !isAdding && <tr><td colSpan={colSpan} className="muted">Пусто</td></tr>}
               {p.rows.slice(0, limit).map((r) => (
                 p.editingKey === `${p.kind}:${r.id}`
-                  ? <FormCells key={r.id} row={r} />
+                  ? <Fragment key={r.id}>{formRow(r)}</Fragment>
                   : (
                     <tr key={r.id} className="prow">
                       {displayCells(r).map((c, i) => <td key={i} style={i === (p.kind === "transferred" ? 3 : 2) ? { textAlign: "right", fontWeight: 600 } : undefined}>{c}</td>)}

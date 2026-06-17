@@ -11,8 +11,10 @@ import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useAuth, type UserOut } from "../context/AuthContext";
+import { useSettings } from "../context/SettingsContext";
 import { listColleagues } from "../api/users";
 import { listDepartments, type Department } from "../api/departments";
+import { listIncomeSources, type IncomeSource } from "../api/incomeSources";
 import { EditExpenseModal } from "../components/EditExpenseModal";
 import { EditIncomeModal } from "../components/EditIncomeModal";
 import { EditTopUpModal } from "../components/EditTopUpModal";
@@ -27,7 +29,8 @@ interface Row {
   amount: string;
   currency: "KGS" | "USD" | "RUB";
   category_id: string;        // для expense — id категории; для income/topup игнорируется
-  source: string;             // для income — текстовое поле «Источник»; для остальных не используется
+  source: string;             // для income — текстовое поле «Источник» (свободный ввод)
+  source_id: string;          // для income — выбор из справочника источников ("" / "manual" / id)
   comment: string;            // комментарий к записи — для всех типов
   date: string;               // YYYY-MM-DD
 }
@@ -59,6 +62,7 @@ function makeEmptyRow(): Row {
     currency: "KGS",
     category_id: "",
     source: "",
+    source_id: "",
     comment: "",
     date: new Date().toISOString().slice(0, 10),
   };
@@ -68,11 +72,14 @@ export default function BulkImport() {
   const nav = useNavigate();
   const toast = useToast();
   const { user } = useAuth();
+  const { flag } = useSettings();
+  const useSourceDirectory = flag("income_sources");
 
   const [rows, setRows] = useState<Row[]>([makeEmptyRow()]);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
+  const [incomeSources, setIncomeSources] = useState<IncomeSource[]>([]);
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -81,7 +88,10 @@ export default function BulkImport() {
     listColleagues().then(setColleagues).catch(() => {});
     api<CategoryOpt[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments().then(setDepartments).catch(() => {});
-  }, []);
+    if (useSourceDirectory) {
+      listIncomeSources(true).then(setIncomeSources).catch(() => {});
+    }
+  }, [useSourceDirectory]);
 
   // Защита: страница только для admin / superadmin
   if (user && user.role !== "admin" && user.role !== "superadmin") {
@@ -150,7 +160,11 @@ export default function BulkImport() {
           base.description = r.comment || null;
         } else if (r.type === "income") {
           base.received_by_id = Number(r.user_id);
-          base.source = r.source || "—";
+          if (useSourceDirectory && r.source_id && r.source_id !== "manual") {
+            base.source_id = Number(r.source_id);
+          } else {
+            base.source = r.source || "—";
+          }
           base.description = r.comment || null;
         } else {
           base.user_id = Number(r.user_id);
@@ -245,6 +259,7 @@ export default function BulkImport() {
                     onKeyDown={(e) => onKeyDown(e, idx)}
                   >
                     <option value="">— выбрать —</option>
+                    {user && <option value={user.id}>Себе ({user.name})</option>}
                     {colleagues.map((u) => (
                       <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
@@ -300,12 +315,36 @@ export default function BulkImport() {
                     </select>
                   )}
                   {r.type === "income" && (
-                    <input
-                      value={r.source}
-                      onChange={(e) => updateRow(idx, { source: e.target.value })}
-                      onKeyDown={(e) => onKeyDown(e, idx)}
-                      placeholder="Источник (кредит, клиент...)"
-                    />
+                    useSourceDirectory ? (
+                      <div className="grid" style={{ gap: 4 }}>
+                        <select
+                          value={r.source_id}
+                          onChange={(e) => updateRow(idx, { source_id: e.target.value, source: "" })}
+                          onKeyDown={(e) => onKeyDown(e, idx)}
+                        >
+                          <option value="">— источник —</option>
+                          {incomeSources.map((s) => (
+                            <option key={s.id} value={s.id}>{s.name}</option>
+                          ))}
+                          <option value="manual">Другой (вручную)</option>
+                        </select>
+                        {r.source_id === "manual" && (
+                          <input
+                            value={r.source}
+                            onChange={(e) => updateRow(idx, { source: e.target.value })}
+                            onKeyDown={(e) => onKeyDown(e, idx)}
+                            placeholder="название источника"
+                          />
+                        )}
+                      </div>
+                    ) : (
+                      <input
+                        value={r.source}
+                        onChange={(e) => updateRow(idx, { source: e.target.value })}
+                        onKeyDown={(e) => onKeyDown(e, idx)}
+                        placeholder="Источник (кредит, клиент...)"
+                      />
+                    )
                   )}
                   {r.type === "topup" && (
                     <div className="grid" style={{ gap: 4 }}>

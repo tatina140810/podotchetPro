@@ -737,7 +737,8 @@ class BulkImportItem(BaseModel):
     category_id: Optional[int] = None         # для expense и topup
     # Подразделение — обязательно для expense/topup (для income игнорируется).
     department_id: Optional[int] = None
-    source: Optional[str] = None              # для income
+    source: Optional[str] = None              # для income (свободный текст)
+    source_id: Optional[int] = None           # для income (выбор из справочника источников)
     description: Optional[str] = None
     note: Optional[str] = None                # для topup
     date: Optional[datetime] = None

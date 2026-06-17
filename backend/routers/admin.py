@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_admin
 from database import get_db
-from models import BalanceTopUp, Category, Department, Expense, Income, MoneyRequest, User
+from models import BalanceTopUp, Category, Department, Expense, Income, IncomeSource, MoneyRequest, User
 from schemas import (
     BulkImportError,
     BulkImportItem,
@@ -81,8 +81,17 @@ def _create_income(db: Session, admin: User, item: BulkImportItem) -> None:
     receiver_id = item.received_by_id or item.user_id
     if receiver_id is None:
         raise ValueError("received_by_id (или user_id) обязателен для income")
-    if not item.source:
-        raise ValueError("source обязателен для income")
+    # Источник: из справочника (source_id) или свободный текст (source).
+    source_id = None
+    source_name = item.source
+    if item.source_id is not None:
+        src = db.get(IncomeSource, item.source_id)
+        if not src or src.org_id != admin.org_id:
+            raise ValueError(f"Источник id={item.source_id} не найден")
+        source_id = src.id
+        source_name = src.name
+    if not source_name:
+        raise ValueError("source (или source_id) обязателен для income")
     receiver = db.get(User, receiver_id)
     if not receiver or receiver.org_id != admin.org_id:
         raise ValueError(f"Получатель id={receiver_id} не найден")
@@ -94,7 +103,8 @@ def _create_income(db: Session, admin: User, item: BulkImportItem) -> None:
         amount=item.amount,
         currency=item.currency,
         amount_kgs=amount_kgs,
-        source=item.source,
+        source=source_name,
+        source_id=source_id,
         description=item.description,
         received_by_id=receiver.id,
         created_by_id=admin.id,

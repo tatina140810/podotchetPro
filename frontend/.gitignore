@@ -4,3 +4,6 @@ dist
 *.local
 .env
 .vite
+
+# Android APK для скачивания (раздаётся через dist, в git не держим)
+public/*.apk

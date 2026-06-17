@@ -115,6 +115,22 @@ export default function Settings() {
           </div>
         </div>
       ))}
+
+      <div style={{ marginBottom: 20 }}>
+        <div className="muted" style={{ fontSize: 12, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+          Мобильное приложение
+        </div>
+        <div className="card" style={{ padding: 14 }}>
+          <div style={{ fontWeight: 600 }}>Android-приложение PodotchetPRO</div>
+          <div className="muted" style={{ fontSize: 12, marginTop: 4, marginBottom: 12 }}>
+            Чтобы работать с телефона. Скачайте APK и установите (на Android разрешите
+            «установку из неизвестных источников»). Тот же аккаунт и данные, что в вебе.
+          </div>
+          <a href="/podotchetpro.apk" download>
+            <button type="button">Скачать APK для Android</button>
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

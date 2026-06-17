@@ -11,7 +11,8 @@ from auth import (
     require_director_level,
 )
 from database import get_db
-from models import Advance, EmployeeSpec, User
+from models import Advance, EmployeeSpec, Organization, User
+from services.plan_limits import assert_limit
 from schemas import AdvanceCreate, AdvanceOut, AdvanceWarning, TransferCreate
 from services.balance import (
     compute_balance,
@@ -65,6 +66,16 @@ def create_advance(
     employee = db.get(User, payload.employee_id)
     if not employee or employee.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
+
+    # Лимит плана: число выдач за текущий календарный месяц.
+    org = db.get(Organization, admin.org_id)
+    _m_start, _m_end = month_bounds()
+    advances_this_month = (
+        db.query(Advance)
+        .filter(Advance.org_id == admin.org_id, Advance.issued_at >= _m_start, Advance.issued_at < _m_end)
+        .count()
+    )
+    assert_limit(org, "max_advances_per_month", advances_this_month)
 
     spec = db.query(EmployeeSpec).filter(EmployeeSpec.user_id == employee.id).first()
 

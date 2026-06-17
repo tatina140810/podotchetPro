@@ -19,6 +19,13 @@ export class ApiError extends Error {
   }
 }
 
+/** При 402 plan_limit_exceeded шлём глобальное событие (поверх обычного error handling). */
+function notifyPlanLimit(status: number, data: any) {
+  if (status === 402 && data && data.detail === "plan_limit_exceeded") {
+    window.dispatchEvent(new CustomEvent("pp-plan-limit", { detail: data }));
+  }
+}
+
 export async function api<T = any>(
   path: string,
   opts: { method?: string; body?: any; headers?: Record<string, string> } = {}
@@ -43,6 +50,7 @@ export async function api<T = any>(
   }
 
   if (!res.ok) {
+    notifyPlanLimit(res.status, data);
     const msg = (data && (data.detail || data.message)) || `HTTP ${res.status}`;
     throw new ApiError(res.status, typeof msg === "string" ? msg : JSON.stringify(msg), data);
   }
@@ -69,6 +77,7 @@ export async function downloadFile(path: string, fallbackName: string) {
   const res = await fetch(path, { headers });
   if (!res.ok) {
     const data = await res.json().catch(() => null);
+    notifyPlanLimit(res.status, data);
     const msg = (data && (data.detail || data.message)) || `HTTP ${res.status}`;
     throw new ApiError(res.status, typeof msg === "string" ? msg : JSON.stringify(msg), data);
   }

@@ -32,6 +32,7 @@ from models import (
 )
 from services.balance import compute_current_balance, load_org_rates
 from services.permissions import hidden_user_ids
+from services.plan_limits import ensure_can_export
 
 
 router = APIRouter(prefix="/api/employees", tags=["employees"])
@@ -279,6 +280,7 @@ def employee_profile_export(
     # Экспорт — только superadmin/admin/gen_director (director-level).
     if not is_director_level(me):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Экспорт доступен только директору/админу")
+    ensure_can_export(db, me)  # guard плана: экспорт только если can_export
     u = _load_employee(db, me, user_id)
     data = _build_profile(db, u, month, year, currency)
     sym = "$" if data["currency"] == "USD" else "с"

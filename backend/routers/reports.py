@@ -49,6 +49,7 @@ from services.balance import (
 )
 from services.excel_export import build_workbook
 from services.permissions import hidden_user_ids
+from services.plan_limits import ensure_can_export
 
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -601,6 +602,7 @@ def report_excel(
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
+    ensure_can_export(db, admin)
     start, end = _resolve_period(date_from, date_to)
     return _xlsx_response(_build_export(db, admin, employee_id, category, currency, start, end))
 
@@ -616,6 +618,7 @@ def report_export(
     admin: User = Depends(require_admin),
 ):
     """POST-версия экспорта (по ТЗ)."""
+    ensure_can_export(db, admin)
     start, end = _resolve_period(date_from, date_to)
     return _xlsx_response(_build_export(db, admin, employee_id, category, currency, start, end))
 
@@ -1280,6 +1283,7 @@ def department_report_export(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    ensure_can_export(db, me)
     data = _build_department_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
     head_font = _Font(bold=True, color="FFFFFF")
@@ -1446,6 +1450,7 @@ def category_report_xlsx(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    ensure_can_export(db, me)
     data = _build_category_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
 
@@ -1512,6 +1517,7 @@ def employees_report_xlsx(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    ensure_can_export(db, me)
     data = _build_employees_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
     wb = _Workbook()
@@ -1561,6 +1567,7 @@ def employee_details_xlsx(
 ):
     """Excel-файл с развёрткой операций сотрудника за выбранный месяц.
     Используется кнопкой рядом с каждым сотрудником в /reports/employees."""
+    ensure_can_export(db, me)
     from routers.users import build_user_history_entries  # избежать циклического импорта при загрузке модуля
 
     u = db.get(User, user_id)
@@ -1630,6 +1637,7 @@ def employee_history_xlsx(
     Доступ: сам сотрудник (для своей истории) ИЛИ директор/аудитор. В отличие от
     details.xlsx — без обязательного месяца (можно весь период или произвольный range),
     и доступен самому подотчётному."""
+    ensure_can_export(db, me)
     from routers.users import build_user_history_entries  # избегаем циклического импорта
 
     u = db.get(User, user_id)

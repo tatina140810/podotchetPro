@@ -44,6 +44,17 @@ class OrgOut(BaseModel):
     address: Optional[str] = None
     logo_url: Optional[str] = None
     is_active: bool
+    plan: str = "free"
+    plan_activated_at: Optional[datetime] = None
+    plan_expires_at: Optional[datetime] = None
+
+
+class PlanInfo(BaseModel):
+    """Ответ GET /api/organizations/{id}/plan."""
+    plan: str
+    limits: dict
+    plan_activated_at: Optional[datetime] = None
+    plan_expires_at: Optional[datetime] = None
 
 
 # ===================== USERS =====================

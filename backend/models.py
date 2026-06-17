@@ -32,6 +32,13 @@ class Organization(Base):
     # Тумблеры фич организации (страница настроек суперадмина). NULL/{} = всё по
     # дефолтам из services/feature_flags.py. Хранится как {"income_sources": true, ...}.
     feature_flags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
+    # Freemium-план: legacy (старые компании, полный доступ) | free | pro | business.
+    # Значения ограничены PlanEnum (services/plan_limits.py); тип String — как role.
+    plan: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="free", server_default="free"
+    )
+    plan_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="organization", cascade="all,delete-orphan")

@@ -24,8 +24,10 @@ from models import (
     Expense,
     MoneyRequest,
     MoneyTransfer,
+    Organization,
     User,
 )
+from services.plan_limits import assert_limit
 from schemas import (
     BalanceHistoryEntry,
     ChainExpense,
@@ -174,6 +176,11 @@ def list_colleagues(
 def create_user(payload: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if db.query(User).filter(User.phone == payload.phone).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Телефон уже занят")
+
+    # Лимит плана: число сотрудников (пользователей) организации.
+    org = db.get(Organization, admin.org_id)
+    current_employees = db.query(User).filter(User.org_id == admin.org_id).count()
+    assert_limit(org, "max_employees", current_employees)
 
     # supervisor_id, если указан, должен быть в той же org
     if payload.supervisor_id is not None:

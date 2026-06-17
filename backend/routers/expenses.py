@@ -40,6 +40,7 @@ from schemas import (
 )
 from services.exchange import get_current_rate
 from services.permissions import hidden_user_ids, visible_user_ids
+from services.plan_limits import ensure_can_export
 
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
@@ -104,6 +105,7 @@ def export_expenses_xlsx(
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
+    ensure_can_export(db, me)
     q = db.query(Expense).filter(Expense.org_id == me.org_id)
     visible = visible_user_ids(db, me)
     if visible is not None:

@@ -4,6 +4,9 @@ import { useAuth, isDirectorOrAuditor } from "./context/AuthContext";
 import { CurrencyProvider, CurrencyToggle } from "./context/CurrencyContext";
 import { ToastProvider } from "./components/Toast";
 import { BurgerMenu } from "./components/BurgerMenu";
+import { PlanBadge } from "./components/PlanBadge";
+import { UpgradeModalHost } from "./components/UpgradeModal";
+import { usePlan } from "./api/plan";
 import { NotificationBell } from "./components/NotificationBell";
 import { ChatWidget } from "./components/chat/ChatWidget";
 import { RateModal } from "./pages/Dashboard";
@@ -41,17 +44,20 @@ import Transfers from "./pages/Transfers";
 
 function ProtectedShell({ children }: { children: React.ReactNode }) {
   const { user, org, logout, loading } = useAuth();
+  const { planInfo } = usePlan(user?.org_id);
   if (loading) return <div className="container"><div className="muted">Загрузка...</div></div>;
   if (!user) return <Navigate to="/login" replace />;
 
   return (
     <>
+      <UpgradeModalHost />
       <header className="app-header">
         <div className="row" style={{ gap: 12, alignItems: "center" }}>
           <BurgerMenu />
           <div className="brand" style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <img src="/logo.png" alt="PodotchetPRO" style={{ height: 30, display: "block" }} />
             {org?.name ? <small>{org.name}</small> : null}
+            <PlanBadge plan={planInfo?.plan} />
           </div>
         </div>
         <div className="row" style={{ gap: 10 }}>

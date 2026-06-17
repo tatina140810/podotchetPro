@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -27,7 +29,14 @@ def register_org(payload: OrgRegister, db: Session = Depends(get_db)):
     if db.query(User).filter(User.phone == payload.admin_phone).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Телефон уже зарегистрирован")
 
-    org = Organization(name=payload.org_name, inn=payload.inn, address=payload.address)
+    # Новые компании всегда стартуют на free (plan из тела запроса НЕ принимаем).
+    org = Organization(
+        name=payload.org_name,
+        inn=payload.inn,
+        address=payload.address,
+        plan="free",
+        plan_activated_at=datetime.utcnow(),
+    )
     db.add(org)
     db.flush()
 

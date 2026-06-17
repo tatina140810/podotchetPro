@@ -34,6 +34,7 @@ import IncomeSources from "./pages/IncomeSources";
 import Settings from "./pages/Settings";
 import IssuedTopups from "./pages/IssuedTopups";
 import Requests from "./pages/Requests";
+import RecurringObligations from "./pages/RecurringObligations";
 import RequestNew from "./pages/RequestNew";
 import RequestDetail from "./pages/RequestDetail";
 import Transfers from "./pages/Transfers";
@@ -124,6 +125,7 @@ function RoleRoutes() {
         <Route path="/issued-topups" element={<IssuedTopups />} />
         <Route path="/admin/bulk-import" element={<BulkImport />} />
         <Route path="/requests" element={<Requests />} />
+        <Route path="/requests/recurring" element={<RecurringObligations />} />
         <Route path="/requests/new" element={<RequestNew />} />
         <Route path="/requests/:id" element={<RequestDetail />} />
         <Route path="/transfers" element={<Transfers />} />
@@ -142,6 +144,7 @@ function RoleRoutes() {
       <Route path="/my-subordinates" element={<MySubordinates />} />
       <Route path="/employees/:id/chain" element={<EmployeeChain />} />
       <Route path="/requests" element={<Requests />} />
+      <Route path="/requests/recurring" element={<RecurringObligations />} />
       <Route path="/requests/new" element={<RequestNew />} />
       <Route path="/requests/:id" element={<RequestDetail />} />
       <Route path="/transfers" element={<Transfers />} />

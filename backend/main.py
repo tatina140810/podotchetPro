@@ -22,6 +22,7 @@ from routers import (
     income_sources,
     notifications,
     push,
+    recurring_obligations,
     reports,
     requests as requests_router,
     settings as settings_router,
@@ -78,6 +79,7 @@ app.include_router(push.router)
 app.include_router(exchange_rates.router)
 app.include_router(income.router)
 app.include_router(income_sources.router)
+app.include_router(recurring_obligations.router)
 app.include_router(settings_router.router)
 app.include_router(admin_router.router)
 

@@ -39,6 +39,7 @@ export function BurgerMenu() {
         // «Приходы» — только admin/superadmin и gen_director (НЕ аудитору)
         ...(user.role !== "auditor" ? [{ to: "/reports/incomes", label: "Приходы" }] : []),
         { to: "/requests", label: "Заявки" },
+        { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/expenses", label: "Расходы" },
         // «Подразделения» — admin/superadmin и auditor (управление иерархией).
         ...(isAdminLike || user.role === "auditor"
@@ -65,6 +66,7 @@ export function BurgerMenu() {
         { to: "/my-expenses", label: "Мои расходы" },
         { to: "/my-history", label: "Моя история" },
         { to: "/requests", label: "Заявки" },
+        { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/my-subordinates", label: "Мои подотчётные" },
       ];
 

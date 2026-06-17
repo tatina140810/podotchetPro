@@ -575,6 +575,33 @@ class Income(Base):
     source_ref: Mapped[Optional["IncomeSource"]] = relationship(foreign_keys=[source_id])
 
 
+class RecurringObligation(Base):
+    """Личный справочник регулярных расходов сотрудника — подсказка при создании
+    заявок (НЕ создаёт заявку автоматически). Данные на уровне пользователя.
+    «Итого к резерву» = сумма строк с periodicity='monthly' (считается на фронте)."""
+    __tablename__ = "recurring_obligations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    # monthly | weekly | one_time
+    periodicity: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="monthly", server_default="monthly"
+    )
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    # Ручная сортировка (кнопки ↑/↓). По возрастанию, затем по id.
+    sort_order: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+
 class ExchangeRate(Base):
     """Курс конвертации валют в рамках org. Берём последний по `date` как текущий.
     Сейчас используется только пара USD/KGS; модель универсальна на будущее."""

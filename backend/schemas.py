@@ -843,5 +843,41 @@ class BalanceTopUpUpdate(BaseModel):
     department_id: Optional[int] = None
 
 
+# ===================== RECURRING OBLIGATIONS (регулярные обязательства) =====================
+
+_PERIODICITY = "^(monthly|weekly|one_time)$"
+
+
+class RecurringObligationCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+    amount: Decimal = Field(..., gt=0)
+    periodicity: str = Field(default="monthly", pattern=_PERIODICITY)
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
+class RecurringObligationUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    amount: Optional[Decimal] = Field(default=None, gt=0)
+    periodicity: Optional[str] = Field(default=None, pattern=_PERIODICITY)
+    comment: Optional[str] = Field(default=None, max_length=1000)
+
+
+class RecurringObligationOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    user_id: int
+    name: str
+    amount: Decimal
+    periodicity: str
+    comment: Optional[str] = None
+    sort_order: int
+    created_at: datetime
+
+
+class ReorderPayload(BaseModel):
+    ids: list[int]
+
+
 # Forward refs
 TokenResponse.model_rebuild()

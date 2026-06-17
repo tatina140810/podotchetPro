@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth, isDirectorLevel, isDirectorOrAuditor, type Role, type UserOut } from "../context/AuthContext";
 import { useDisplayCurrency } from "../context/CurrencyContext";
 import { useToast } from "../components/Toast";
@@ -142,6 +142,12 @@ export default function EmployeeProfile() {
               <div className="muted" style={{ fontSize: 13 }}>
                 {ROLE_RU[emp.role as Role] || emp.role}{emp.department ? ` · ${emp.department}` : ""}
               </div>
+              <Link
+                to={`/requests/recurring?user_id=${id}&name=${encodeURIComponent(emp.name)}`}
+                style={{ fontSize: 13 }}
+              >
+                Регулярные обязательства →
+              </Link>
             </div>
           </div>
           <div className="row" style={{ gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>

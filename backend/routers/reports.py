@@ -1351,6 +1351,11 @@ def incomes_report(
     if year is not None and month is not None:
         start, end = _month_range(year, month)
     q = db.query(Income).filter(Income.org_id == me.org_id)
+    # Фича 2: приходы конфиденциальных сотрудников (Билим) скрыты от всех, кроме
+    # superadmin / gen_director / самого сотрудника.
+    hidden = hidden_user_ids(db, me)
+    if hidden:
+        q = q.filter(Income.received_by_id.notin_(hidden))
     if start:
         q = q.filter(Income.date >= start)
     if end:

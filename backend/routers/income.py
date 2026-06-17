@@ -16,6 +16,7 @@ from database import get_db
 from models import Income, IncomeSource, User
 from schemas import IncomeCreate, IncomeOut, IncomeUpdate
 from services.exchange import get_current_rate
+from services.permissions import hidden_user_ids
 
 
 router = APIRouter(prefix="/api/income", tags=["income"])
@@ -103,6 +104,10 @@ def list_incomes(
 ):
     """Список приходов в org с опциональным фильтром по дате."""
     q = db.query(Income).filter(Income.org_id == me.org_id)
+    # Фича 2: приходы конфиденциальных сотрудников скрыты от не-уполномоченных ролей.
+    hidden = hidden_user_ids(db, me)
+    if hidden:
+        q = q.filter(Income.received_by_id.notin_(hidden))
     if date_from:
         q = q.filter(Income.date >= date_from)
     if date_to:
@@ -121,6 +126,9 @@ def delete_income(
     inc = db.get(Income, income_id)
     if not inc or inc.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
+    # Фича 2: нельзя трогать приход конфиденциального сотрудника без прав на него.
+    if inc.received_by_id in hidden_user_ids(db, admin):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
     db.delete(inc)
     db.commit()
     return None
@@ -138,6 +146,9 @@ def update_income(
     """
     inc = db.get(Income, income_id)
     if not inc or inc.org_id != admin.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
+    # Фича 2: нельзя редактировать приход конфиденциального сотрудника без прав.
+    if inc.received_by_id in hidden_user_ids(db, admin):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
 
     data = payload.model_dump(exclude_unset=True)

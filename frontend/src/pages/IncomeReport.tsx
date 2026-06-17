@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useDisplayCurrency } from "../context/CurrencyContext";
 import { useSettings } from "../context/SettingsContext";
@@ -11,6 +11,7 @@ interface IncomeItem {
   amount_kgs: number;
   amount_display: number;
   source: string;
+  source_id: number | null;
   description: string | null;
   received_by_name: string | null;
   created_by_name: string | null;
@@ -48,6 +49,31 @@ export default function IncomeReport() {
   const showBySource = flag("income_source_report");
   const [data, setData] = useState<Report | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Какие источники раскрыты (ключ совпадает с группировкой бэкенда).
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function sourceKey(s: SourceRow): string {
+    return s.source_id != null ? `id:${s.source_id}` : `txt:${(s.source || "—").trim().toLowerCase()}`;
+  }
+
+  function toggleSource(s: SourceRow) {
+    const k = sourceKey(s);
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(k)) next.delete(k); else next.add(k);
+      return next;
+    });
+  }
+
+  // История по источнику — фильтруем уже загруженные позиции (без доп. запросов).
+  function itemsForSource(s: SourceRow): IncomeItem[] {
+    if (!data) return [];
+    return data.items.filter((it) =>
+      s.source_id != null
+        ? it.source_id === s.source_id
+        : it.source_id == null && (it.source || "—").trim().toLowerCase() === (s.source || "—").trim().toLowerCase()
+    );
+  }
 
   function reload() {
     setErr(null);
@@ -63,6 +89,7 @@ export default function IncomeReport() {
 
   useEffect(() => {
     setData(null);
+    setExpanded(new Set());
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, month, display]);
@@ -130,15 +157,58 @@ export default function IncomeReport() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.by_source.map((s, i) => (
-                    <tr key={s.source_id ?? `txt-${i}`}>
-                      <td style={{ fontWeight: 600 }}>{s.source || "—"}</td>
-                      <td style={{ textAlign: "right" }} className="muted">{s.count}</td>
-                      <td style={{ textAlign: "right", color: "var(--success)", fontWeight: 600 }}>
-                        +{s.total.toLocaleString("ru-RU")} {sym}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.by_source.map((s, i) => {
+                    const k = sourceKey(s);
+                    const open = expanded.has(k);
+                    return (
+                      <Fragment key={s.source_id ?? `txt-${i}`}>
+                        <tr onClick={() => toggleSource(s)} style={{ cursor: "pointer" }}>
+                          <td style={{ fontWeight: 600 }}>
+                            <span style={{ marginRight: 6 }}>{open ? "▼" : "▶"}</span>
+                            {s.source || "—"}
+                          </td>
+                          <td style={{ textAlign: "right" }} className="muted">{s.count}</td>
+                          <td style={{ textAlign: "right", color: "var(--success)", fontWeight: 600 }}>
+                            +{s.total.toLocaleString("ru-RU")} {sym}
+                          </td>
+                        </tr>
+                        {open && (
+                          <tr>
+                            <td colSpan={3} style={{ background: "var(--bg-subtle, rgba(255,255,255,0.03))", padding: 12 }}>
+                              <table>
+                                <thead>
+                                  <tr>
+                                    <th>Дата</th>
+                                    <th>Получатель</th>
+                                    <th style={{ textAlign: "right" }}>Сумма (исх.)</th>
+                                    <th style={{ textAlign: "right" }}>В {sym}</th>
+                                    <th>Комментарий</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {itemsForSource(s).map((it) => (
+                                    <tr key={it.id}>
+                                      <td className="muted" style={{ fontSize: 12 }}>
+                                        {new Date(it.date).toLocaleDateString("ru-RU")}
+                                      </td>
+                                      <td style={{ fontSize: 13 }}>{it.received_by_name || "—"}</td>
+                                      <td style={{ textAlign: "right", fontWeight: 600 }}>
+                                        +{it.amount.toLocaleString("ru-RU")} {symFor(it.currency)}
+                                      </td>
+                                      <td style={{ textAlign: "right", color: "var(--success)" }}>
+                                        +{it.amount_display.toLocaleString("ru-RU")} {sym}
+                                      </td>
+                                      <td className="muted" style={{ fontSize: 12 }}>{it.description || ""}</td>
+                                    </tr>
+                                  ))}
+                                </tbody>
+                              </table>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

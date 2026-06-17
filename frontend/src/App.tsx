@@ -30,6 +30,8 @@ import EmployeeProfile from "./pages/EmployeeProfile";
 import ReportsDepartments from "./pages/ReportsDepartments";
 import BalanceReport from "./pages/BalanceReport";
 import IncomeReport from "./pages/IncomeReport";
+import IncomeSources from "./pages/IncomeSources";
+import Settings from "./pages/Settings";
 import IssuedTopups from "./pages/IssuedTopups";
 import Requests from "./pages/Requests";
 import RequestNew from "./pages/RequestNew";
@@ -110,6 +112,8 @@ function RoleRoutes() {
         <Route path="/expenses/new" element={<NewExpense />} />
         <Route path="/categories" element={<Categories />} />
         <Route path="/admin/departments" element={<Departments />} />
+        <Route path="/admin/income-sources" element={<IncomeSources />} />
+        <Route path="/admin/settings" element={<Settings />} />
         <Route path="/reports" element={<Navigate to="/" replace />} />
         <Route path="/reports/categories" element={<Navigate to="/" replace />} />
         <Route path="/reports/employees" element={<EmployeesReport />} />

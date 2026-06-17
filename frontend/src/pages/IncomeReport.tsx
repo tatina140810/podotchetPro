@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
 import { useDisplayCurrency } from "../context/CurrencyContext";
+import { useSettings } from "../context/SettingsContext";
 
 interface IncomeItem {
   id: number;
@@ -15,10 +16,18 @@ interface IncomeItem {
   created_by_name: string | null;
 }
 
+interface SourceRow {
+  source_id: number | null;
+  source: string;
+  total: number;
+  count: number;
+}
+
 interface Report {
   year: number | null;
   month: number | null;
   items: IncomeItem[];
+  by_source: SourceRow[];
   total: number;
   count: number;
   currency: "KGS" | "USD";
@@ -35,6 +44,8 @@ export default function IncomeReport() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState<number | "">(today.getMonth() + 1);
   const { display } = useDisplayCurrency();
+  const { flag } = useSettings();
+  const showBySource = flag("income_source_report");
   const [data, setData] = useState<Report | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -106,6 +117,32 @@ export default function IncomeReport() {
               </div>
             </div>
           </div>
+
+          {showBySource && data.by_source && data.by_source.length > 0 && (
+            <div className="card" style={{ marginBottom: 16, overflow: "auto" }}>
+              <div style={{ fontWeight: 600, marginBottom: 10 }}>По источникам</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th>Источник</th>
+                    <th style={{ textAlign: "right" }}>Кол-во</th>
+                    <th style={{ textAlign: "right" }}>Итого ({sym})</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.by_source.map((s, i) => (
+                    <tr key={s.source_id ?? `txt-${i}`}>
+                      <td style={{ fontWeight: 600 }}>{s.source || "—"}</td>
+                      <td style={{ textAlign: "right" }} className="muted">{s.count}</td>
+                      <td style={{ textAlign: "right", color: "var(--success)", fontWeight: 600 }}>
+                        +{s.total.toLocaleString("ru-RU")} {sym}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           <div className="card" style={{ overflow: "auto" }}>
             <table>

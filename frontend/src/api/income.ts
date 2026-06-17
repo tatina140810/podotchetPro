@@ -6,6 +6,7 @@ export interface Income {
   amount: string;
   currency: "KGS" | "USD" | "RUB";
   source: string;
+  source_id: number | null;
   description: string | null;
   received_by_id: number;
   received_by_name: string | null;
@@ -29,7 +30,8 @@ export function listIncomes(params: {
 export function createIncome(payload: {
   amount: number | string;
   currency: "KGS" | "USD" | "RUB";
-  source: string;
+  source?: string | null;
+  source_id?: number | null;
   description?: string | null;
   received_by_id: number;
   date?: string;
@@ -47,6 +49,7 @@ export function updateIncome(
     amount: number | string;
     currency: "KGS" | "USD" | "RUB";
     source: string;
+    source_id: number | null;
     description: string | null;
     received_by_id: number;
     date: string;

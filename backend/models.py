@@ -29,6 +29,9 @@ class Organization(Base):
     address: Mapped[Optional[str]] = mapped_column(String(500))
     logo_url: Mapped[Optional[str]] = mapped_column(String(500))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Тумблеры фич организации (страница настроек суперадмина). NULL/{} = всё по
+    # дефолтам из services/feature_flags.py. Хранится как {"income_sources": true, ...}.
+    feature_flags: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
@@ -56,6 +59,27 @@ class Department(Base):
 
     __table_args__ = (
         UniqueConstraint("org_id", "name", name="uq_departments_org_name"),
+    )
+
+
+class IncomeSource(Base):
+    """Справочник источников дохода (как подразделение, но для приходов).
+    Примеры: «Обменка», «Кредит», «Оплата клиента». Уникально по (org_id, name).
+    is_active=False — скрыт из выпадающих списков, но старые приходы на него ссылаются."""
+    __tablename__ = "income_sources"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=sa.text("true"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("org_id", "name", name="uq_income_sources_org_name"),
     )
 
 
@@ -529,7 +553,13 @@ class Income(Base):
     # = amount × курс_на_момент_создания. NULL — только у старых записей до миграции
     # (если курса не было) — такие в баланс не входят.
     amount_kgs: Mapped[Optional[float]] = mapped_column(Numeric(14, 2), nullable=True)
+    # Текстовый источник (legacy / свободный ввод). При выборе из справочника сюда
+    # дублируется имя источника — чтобы старые отчёты и записи без source_id работали.
     source: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Ссылка на справочник источников (если выбран из списка). NULL = свободный текст.
+    source_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("income_sources.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     description: Mapped[Optional[str]] = mapped_column(Text)
     received_by_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
@@ -542,6 +572,7 @@ class Income(Base):
 
     received_by: Mapped[User] = relationship(foreign_keys=[received_by_id])
     created_by: Mapped[User] = relationship(foreign_keys=[created_by_id])
+    source_ref: Mapped[Optional["IncomeSource"]] = relationship(foreign_keys=[source_id])
 
 
 class ExchangeRate(Base):

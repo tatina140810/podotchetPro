@@ -6,8 +6,10 @@ import { isDirectorLevel, useAuth, type UserOut } from "../context/AuthContext";
 import { useToast } from "../components/Toast";
 import { getCurrentRate, getCurrentRates, refreshFromNbkr, setRate } from "../api/exchange";
 import { createIncome } from "../api/income";
+import { listIncomeSources, type IncomeSource } from "../api/incomeSources";
 import { listColleagues } from "../api/users";
 import { formatMoney, useDisplayCurrency } from "../context/CurrencyContext";
+import { useSettings } from "../context/SettingsContext";
 
 interface CashBalance {
   kgs: number;
@@ -177,7 +179,13 @@ export default function Dashboard() {
 export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const toast = useToast();
   const { user: me } = useAuth();
+  const { flag } = useSettings();
+  const useSourceDirectory = flag("income_sources");
+  const selfIncome = flag("self_income");
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
+  const [sources, setSources] = useState<IncomeSource[]>([]);
+  // При выборе из справочника храним id; "manual" — режим свободного ввода.
+  const [sourceId, setSourceId] = useState<number | "" | "manual">("");
   const [usdKgs, setUsdKgs] = useState<number | null>(null);
   const [rubKgs, setRubKgs] = useState<number | null>(null);
   const [form, setForm] = useState({
@@ -185,16 +193,20 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
     currency: "KGS" as "KGS" | "USD" | "RUB",
     source: "",
     description: "",
-    received_by_id: "" as number | "",
+    // По умолчанию приход «себе», если фича включена (можно поменять получателя).
+    received_by_id: (selfIncome && me ? me.id : "") as number | "",
     date: new Date().toISOString().slice(0, 10),
   });
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
     listColleagues().then(setColleagues).catch(() => {});
+    if (useSourceDirectory) {
+      listIncomeSources(true).then(setSources).catch(() => {});
+    }
     getCurrentRate("USD", "KGS").then((r) => setUsdKgs(r.rate ? Number(r.rate) : null)).catch(() => {});
     getCurrentRate("RUB", "KGS").then((r) => setRubKgs(r.rate ? Number(r.rate) : null)).catch(() => {});
-  }, []);
+  }, [useSourceDirectory]);
 
   const rateForCurrency =
     form.currency === "USD" ? usdKgs :
@@ -214,14 +226,19 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
     e.preventDefault();
     const amt = parseFloat(form.amount.replace(",", "."));
     if (!isFinite(amt) || amt <= 0) { toast.show("error", "Введите сумму > 0"); return; }
-    if (!form.source.trim()) { toast.show("error", "Укажите источник"); return; }
+
+    // Источник: из справочника (source_id) либо свободный текст (source).
+    const fromDirectory = useSourceDirectory && typeof sourceId === "number";
+    if (useSourceDirectory && sourceId === "") { toast.show("error", "Выберите источник"); return; }
+    if (!fromDirectory && !form.source.trim()) { toast.show("error", "Укажите источник"); return; }
     if (!form.received_by_id) { toast.show("error", "Выберите получателя"); return; }
     setBusy(true);
     try {
       await createIncome({
         amount: amt,
         currency: form.currency,
-        source: form.source.trim(),
+        source: fromDirectory ? null : form.source.trim(),
+        source_id: fromDirectory ? (sourceId as number) : null,
         description: form.description.trim() || null,
         received_by_id: Number(form.received_by_id),
         date: form.date ? new Date(form.date).toISOString() : undefined,
@@ -267,12 +284,40 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
           </div>
           <div>
             <label>Источник</label>
-            <input
-              value={form.source}
-              onChange={(e) => setForm({ ...form, source: e.target.value })}
-              placeholder="кредит, от партнёра, оплата клиента..."
-              required
-            />
+            {useSourceDirectory ? (
+              <>
+                <select
+                  value={sourceId === "" ? "" : String(sourceId)}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setSourceId(v === "" ? "" : v === "manual" ? "manual" : Number(v));
+                  }}
+                  required
+                >
+                  <option value="">— выберите источник —</option>
+                  {sources.map((s) => (
+                    <option key={s.id} value={s.id}>{s.name}</option>
+                  ))}
+                  <option value="manual">Другой (ввести вручную)</option>
+                </select>
+                {sourceId === "manual" && (
+                  <input
+                    style={{ marginTop: 8 }}
+                    value={form.source}
+                    onChange={(e) => setForm({ ...form, source: e.target.value })}
+                    placeholder="название источника"
+                    required
+                  />
+                )}
+              </>
+            ) : (
+              <input
+                value={form.source}
+                onChange={(e) => setForm({ ...form, source: e.target.value })}
+                placeholder="кредит, от партнёра, оплата клиента..."
+                required
+              />
+            )}
           </div>
           <div>
             <label>Кому зачислить</label>
@@ -282,6 +327,7 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
               required
             >
               <option value="">— выберите —</option>
+              {me && <option value={me.id}>Себе ({me.name})</option>}
               {colleagues.map((u) => (
                 <option key={u.id} value={u.id}>{u.name}</option>
               ))}

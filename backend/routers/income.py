@@ -13,12 +13,27 @@ from auth import (
     require_director_or_auditor,
 )
 from database import get_db
-from models import Income, User
+from models import Income, IncomeSource, User
 from schemas import IncomeCreate, IncomeOut, IncomeUpdate
 from services.exchange import get_current_rate
 
 
 router = APIRouter(prefix="/api/income", tags=["income"])
+
+
+def _resolve_source(db: Session, org_id: int, source_id, source_text) -> "tuple[Optional[int], str]":
+    """Возвращает (source_id, source_name). Если выбран справочник — имя берём из него
+    (дублируется в текстовый source). Иначе используем свободный текст. Хотя бы одно
+    из двух обязательно."""
+    if source_id is not None:
+        src = db.get(IncomeSource, source_id)
+        if not src or src.org_id != org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Источник не найден")
+        return src.id, src.name
+    text = (source_text or "").strip()
+    if not text:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите источник прихода")
+    return None, text
 
 
 def _to_out(inc: Income) -> IncomeOut:
@@ -45,6 +60,8 @@ def create_income(
     if not receiver or receiver.org_id != me.org_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Получатель не найден")
 
+    src_id, src_name = _resolve_source(db, me.org_id, payload.source_id, payload.source)
+
     # Считаем amount_kgs (КГС-эквивалент)
     amount_kgs: Decimal | None
     if payload.currency == "KGS":
@@ -63,7 +80,8 @@ def create_income(
         amount=payload.amount,
         currency=payload.currency,
         amount_kgs=amount_kgs,
-        source=payload.source,
+        source=src_name,
+        source_id=src_id,
         description=payload.description,
         received_by_id=receiver.id,
         created_by_id=me.id,
@@ -130,7 +148,22 @@ def update_income(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Получатель не найден")
         inc.received_by_id = data["received_by_id"]
 
-    for f in ("source", "description", "date"):
+    # Источник: если прислан source_id — берём имя из справочника; если только source —
+    # свободный текст и сбрасываем привязку к справочнику.
+    if "source_id" in data:
+        if data["source_id"] is not None:
+            src = db.get(IncomeSource, data["source_id"])
+            if not src or src.org_id != admin.org_id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Источник не найден")
+            inc.source_id = src.id
+            inc.source = src.name
+        else:
+            inc.source_id = None
+    if "source" in data and data["source"] is not None and "source_id" not in data:
+        inc.source = data["source"]
+        inc.source_id = None
+
+    for f in ("description", "date"):
         if f in data:
             setattr(inc, f, data[f])
 

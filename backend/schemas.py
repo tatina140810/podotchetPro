@@ -205,6 +205,53 @@ class DepartmentOut(BaseModel):
     category_count: int = 0
 
 
+# ===================== INCOME SOURCES (справочник источников дохода) =====================
+
+
+class IncomeSourceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=200)
+
+
+class IncomeSourceUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    is_active: Optional[bool] = None
+
+
+class IncomeSourceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    org_id: int
+    name: str
+    is_active: bool
+    created_at: datetime
+    # Сколько приходов ссылается на источник (для страницы управления).
+    income_count: int = 0
+
+
+# ===================== SETTINGS (фич-тумблеры организации) =====================
+
+
+class FlagDefinition(BaseModel):
+    key: str
+    label: str
+    description: str
+    default: bool
+    group: str
+
+
+class SettingsOut(BaseModel):
+    # Текущие значения (дефолты, перекрытые сохранёнными в org).
+    flags: dict[str, bool]
+    # Описания тумблеров для отрисовки страницы настроек.
+    definitions: list[FlagDefinition]
+
+
+class SettingsUpdate(BaseModel):
+    # Частичное обновление: присылаем только меняемые ключи.
+    flags: dict[str, bool]
+
+
 # ===================== ADVANCES =====================
 
 
@@ -743,7 +790,10 @@ class CurrentRateOut(BaseModel):
 class IncomeCreate(BaseModel):
     amount: Decimal = Field(..., gt=0)
     currency: str = Field(default="KGS", pattern="^(KGS|USD|EUR|RUB)$")
-    source: str = Field(..., min_length=1, max_length=200)
+    # source — свободный текст; source_id — выбор из справочника. Нужно хотя бы одно
+    # (валидируется в роутере). Если задан source_id, имя источника подставится в source.
+    source: Optional[str] = Field(default=None, max_length=200)
+    source_id: Optional[int] = None
     description: Optional[str] = None
     received_by_id: int
     date: Optional[datetime] = None
@@ -760,6 +810,7 @@ class IncomeOut(BaseModel):
     currency: str
     amount_kgs: Optional[Decimal] = None  # КГС-эквивалент, зафиксированный при создании
     source: str
+    source_id: Optional[int] = None
     description: Optional[str] = None
     received_by_id: int
     received_by_name: Optional[str] = None
@@ -774,6 +825,7 @@ class IncomeUpdate(BaseModel):
     amount: Optional[Decimal] = Field(default=None, gt=0)
     currency: Optional[str] = Field(default=None, pattern="^(KGS|USD|EUR|RUB)$")
     source: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    source_id: Optional[int] = None
     description: Optional[str] = None
     received_by_id: Optional[int] = None
     date: Optional[datetime] = None

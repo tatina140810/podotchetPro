@@ -1359,6 +1359,8 @@ def incomes_report(
 
     items: list[dict] = []
     total_kgs = 0.0
+    # Разбивка по источникам: ключ — source_id (если из справочника) или текст источника.
+    by_source: dict[str, dict] = {}
     for i in rows:
         rate_for_cur = rates.get(i.currency, Decimal("0"))
         kgs_value = float(Decimal(str(i.amount)) * rate_for_cur)
@@ -1371,15 +1373,29 @@ def incomes_report(
             "amount_kgs": kgs_value,
             "amount_display": _maybe_convert_usd(kgs_value, currency, usd_rate),
             "source": i.source,
+            "source_id": i.source_id,
             "description": i.description,
             "received_by_name": i.received_by.name if i.received_by else None,
             "received_by_id": i.received_by_id,
             "created_by_name": i.created_by.name if i.created_by else None,
         })
+        key = f"id:{i.source_id}" if i.source_id else f"txt:{(i.source or '—').strip().lower()}"
+        bucket = by_source.setdefault(
+            key,
+            {"source_id": i.source_id, "source": i.source or "—", "total_kgs": 0.0, "count": 0},
+        )
+        bucket["total_kgs"] += kgs_value
+        bucket["count"] += 1
+
+    by_source_list = sorted(by_source.values(), key=lambda b: b["total_kgs"], reverse=True)
+    for b in by_source_list:
+        b["total"] = _maybe_convert_usd(b.pop("total_kgs"), currency, usd_rate)
+
     return {
         "year": year,
         "month": month,
         "items": items,
+        "by_source": by_source_list,
         "total": _maybe_convert_usd(total_kgs, currency, usd_rate),
         "count": len(items),
         "currency": currency if (currency == "KGS" or usd_rate) else "KGS",

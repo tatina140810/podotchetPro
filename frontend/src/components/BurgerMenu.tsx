@@ -1,9 +1,11 @@
 import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth, isDirectorOrAuditor } from "../context/AuthContext";
+import { useSettings } from "../context/SettingsContext";
 
 export function BurgerMenu() {
   const { user } = useAuth();
+  const { flag } = useSettings();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -46,8 +48,16 @@ export function BurgerMenu() {
         ...(isAdminLike
           ? [
               { to: "/categories", label: "Категории" },
+              // «Источники дохода» — справочник, виден только при включённой фиче.
+              ...(flag("income_sources")
+                ? [{ to: "/admin/income-sources", label: "Источники дохода" }]
+                : []),
               { to: "/admin/bulk-import", label: "Импорт истории" },
             ]
+          : []),
+        // «Настройки» — только суперадмин (управление тумблерами фич).
+        ...(user.role === "superadmin"
+          ? [{ to: "/admin/settings", label: "Настройки" }]
           : []),
       ]
     : [

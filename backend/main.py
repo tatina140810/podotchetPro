@@ -19,10 +19,12 @@ from routers import (
     exchange_rates,
     expenses,
     income,
+    income_sources,
     notifications,
     push,
     reports,
     requests as requests_router,
+    settings as settings_router,
     specs,
     transfers,
     users,
@@ -75,6 +77,8 @@ app.include_router(notifications.router)
 app.include_router(push.router)
 app.include_router(exchange_rates.router)
 app.include_router(income.router)
+app.include_router(income_sources.router)
+app.include_router(settings_router.router)
 app.include_router(admin_router.router)
 
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")

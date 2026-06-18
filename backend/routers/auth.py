@@ -97,3 +97,17 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return UserOut.model_validate(user)
+
+
+@router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
+def delete_account(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    """Удаление аккаунта (App Store Guideline 5.1.1(v) / право на удаление данных).
+
+    Удаляет организацию пользователя СО ВСЕМИ данными (каскад по org_id): сотрудники,
+    расходы, приходы, выдачи, заявки, категории, подразделения и т.д. Действие
+    необратимо. Все FK с org_id — ondelete=CASCADE, поэтому удаление чистое."""
+    org = db.get(Organization, user.org_id)
+    if org:
+        db.delete(org)
+        db.commit()
+    return None

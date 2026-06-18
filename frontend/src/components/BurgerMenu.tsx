@@ -2,11 +2,26 @@ import { useEffect, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { useAuth, isDirectorOrAuditor } from "../context/AuthContext";
 import { useSettings } from "../context/SettingsContext";
+import { api } from "../api/client";
 
 export function BurgerMenu() {
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const { flag } = useSettings();
   const [open, setOpen] = useState(false);
+
+  async function deleteAccount() {
+    if (!confirm(
+      "Удалить аккаунт и ВСЕ данные организации (сотрудники, расходы, приходы, выдачи, " +
+      "заявки, отчёты)? Это действие необратимо."
+    )) return;
+    try {
+      await api("/api/auth/account", { method: "DELETE" });
+    } catch (e) {
+      // 204 без тела — клиент может бросить на пустом ответе; игнорируем и выходим
+    }
+    logout();
+    window.location.href = "/login";
+  }
 
   useEffect(() => {
     if (!open) return;
@@ -119,6 +134,16 @@ export function BurgerMenu() {
               {it.label}
             </NavLink>
           ))}
+          <button
+            type="button"
+            onClick={() => { setOpen(false); deleteAccount(); }}
+            style={{
+              marginTop: 16, background: "none", border: "none", textAlign: "left",
+              color: "var(--danger)", fontSize: 13, cursor: "pointer", padding: "8px 0",
+            }}
+          >
+            Удалить аккаунт
+          </button>
         </nav>
       </aside>
     </>

@@ -154,6 +154,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     await createTransfer({
       to_user_id: Number(form.transfer_to_user_id),
       amount: Number(form.amount),
+      currency: form.currency,
       note: form.description.trim() || null,
     });
     toast.show("success", "Передано");
@@ -329,17 +330,15 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             <input type="number" min="0.01" step="0.01" value={form.amount}
                    onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
           </div>
-          {kind !== "transfer" && (
-            <div style={{ flex: 1, minWidth: 110 }}>
-              <label>Валюта</label>
-              <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
-                <option value="KGS">KGS — сом</option>
-                <option value="USD">USD — $</option>
-                <option value="EUR">EUR — €</option>
-                <option value="RUB">RUB — ₽</option>
-              </select>
-            </div>
-          )}
+          <div style={{ flex: 1, minWidth: 110 }}>
+            <label>Валюта</label>
+            <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
+              <option value="KGS">KGS — сом</option>
+              <option value="USD">USD — $</option>
+              <option value="EUR">EUR — €</option>
+              <option value="RUB">RUB — ₽</option>
+            </select>
+          </div>
         </div>
 
         <div>

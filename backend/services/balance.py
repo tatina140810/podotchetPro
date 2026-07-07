@@ -237,8 +237,10 @@ def _approved_requests_out(db: Session, org_id: int, user_id: int,
 
 def _transfers_in(db: Session, org_id: int, user_id: int,
                   end: Optional[datetime] = None) -> Decimal:
-    """MoneyTransfer — без currency, всегда KGS."""
-    q = db.query(func.coalesce(func.sum(MoneyTransfer.amount), 0)).filter(
+    """MoneyTransfer в KGS-эквиваленте: amount_kgs у мультивалютных, amount у старых
+    (там amount_kgs=NULL и amount уже в сомах)."""
+    kgs = func.coalesce(MoneyTransfer.amount_kgs, MoneyTransfer.amount)
+    q = db.query(func.coalesce(func.sum(kgs), 0)).filter(
         MoneyTransfer.org_id == org_id,
         MoneyTransfer.to_user_id == user_id,
     )
@@ -249,7 +251,8 @@ def _transfers_in(db: Session, org_id: int, user_id: int,
 
 def _transfers_out(db: Session, org_id: int, user_id: int,
                    end: Optional[datetime] = None) -> Decimal:
-    q = db.query(func.coalesce(func.sum(MoneyTransfer.amount), 0)).filter(
+    kgs = func.coalesce(MoneyTransfer.amount_kgs, MoneyTransfer.amount)
+    q = db.query(func.coalesce(func.sum(kgs), 0)).filter(
         MoneyTransfer.org_id == org_id,
         MoneyTransfer.from_user_id == user_id,
     )

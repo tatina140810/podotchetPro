@@ -8,6 +8,8 @@ export interface MoneyTransfer {
   to_user_id: number;
   to_user_name: string | null;
   amount: string;
+  currency: "KGS" | "USD" | "EUR" | "RUB" | string;
+  amount_kgs: string | null;
   note: string | null;
   created_at: string;
 }
@@ -38,6 +40,7 @@ export function listTransfers(): Promise<MoneyTransfer[]> {
 export function createTransfer(payload: {
   to_user_id: number;
   amount: number | string;
+  currency?: "KGS" | "USD" | "EUR" | "RUB" | string;
   note?: string | null;
 }): Promise<MoneyTransfer> {
   return api<MoneyTransfer>("/api/transfers", { method: "POST", body: payload });

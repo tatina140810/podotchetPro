@@ -153,6 +153,19 @@ def create_transfer(
     if to_user.id == me.id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нельзя передать деньги самому себе")
 
+    # KGS-эквивалент фиксируем на момент перевода (как у выдач/пополнений): по нему
+    # считается общий баланс. Для не-KGS нужен курс — иначе перевод не провести.
+    if payload.currency == "KGS":
+        amount_kgs = payload.amount
+    else:
+        rate = get_current_rate(db, me.org_id, payload.currency, "KGS")
+        if rate is None:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"Установите курс {payload.currency}/KGS перед переводом в {payload.currency}",
+            )
+        amount_kgs = Decimal(str(payload.amount)) * rate
+
     # Отрицательный баланс разрешён сознательно: начальное поступление денег
     # в организации пока не фиксируется (нет учёта казны на старте). Если у юзера
     # ещё не было topup/входящих переводов — он может уйти в минус, и это нормально.
@@ -163,6 +176,8 @@ def create_transfer(
         from_user_id=me.id,
         to_user_id=to_user.id,
         amount=payload.amount,
+        currency=payload.currency,
+        amount_kgs=amount_kgs,
         note=payload.note,
     )
     db.add(t)

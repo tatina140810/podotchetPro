@@ -517,6 +517,12 @@ class MoneyTransfer(Base):
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
     )
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="KGS", server_default="KGS"
+    )  # KGS / USD / EUR / RUB
+    # КГС-эквивалент на момент перевода. Для KGS = amount; для USD/EUR/RUB = amount × курс.
+    # NULL у старых записей (до мультивалютности) — там amount уже в KGS.
+    amount_kgs: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
     note: Mapped[Optional[str]] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 

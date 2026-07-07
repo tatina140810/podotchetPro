@@ -8,6 +8,7 @@ import {
   type MoneyTransfer,
 } from "../api/transfers";
 import { listColleagues } from "../api/users";
+import { CURRENCIES, CURRENCY_SYMBOL } from "../lib/currency";
 
 interface MeBalance {
   current_balance: string | number;
@@ -21,6 +22,7 @@ export default function Transfers() {
   const [balance, setBalance] = useState<number>(0);
   const [toUserId, setToUserId] = useState<number | "">("");
   const [amount, setAmount] = useState("");
+  const [currency, setCurrency] = useState("KGS");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -59,10 +61,12 @@ export default function Transfers() {
       await createTransfer({
         to_user_id: Number(toUserId),
         amount: amt,
+        currency,
         note: note.trim() || null,
       });
       toast.show("success", "Деньги переданы");
       setAmount("");
+      setCurrency("KGS");
       setNote("");
       setToUserId("");
       reload();
@@ -107,14 +111,22 @@ export default function Transfers() {
               ))}
             </select>
           </div>
-          <div>
-            <label>Сумма (сом)</label>
-            <input
-              value={amount}
-              onChange={(e) => setAmount(e.target.value)}
-              inputMode="decimal"
-              required
-            />
+          <div className="row" style={{ gap: 8 }}>
+            <div style={{ flex: 2 }}>
+              <label>Сумма</label>
+              <input
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                inputMode="decimal"
+                required
+              />
+            </div>
+            <div style={{ flex: 1, minWidth: 110 }}>
+              <label>Валюта</label>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)}>
+                {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+              </select>
+            </div>
           </div>
           <div>
             <label>Заметка (необязательно)</label>
@@ -159,7 +171,7 @@ export default function Transfers() {
                       fontWeight: 600,
                       color: mineOut ? "var(--danger)" : "var(--success)",
                     }}>
-                      {mineOut ? "−" : "+"}{Number(t.amount).toLocaleString("ru-RU")} с
+                      {mineOut ? "−" : "+"}{Number(t.amount).toLocaleString("ru-RU")} {CURRENCY_SYMBOL[t.currency] || t.currency || "с"}
                     </td>
                     <td className="muted" style={{ fontSize: 13 }}>{t.note || ""}</td>
                   </tr>

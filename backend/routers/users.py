@@ -385,6 +385,7 @@ def build_user_history_entries(
             BalanceHistoryEntry(
                 kind="transfer_in",
                 amount=Decimal(str(t.amount)),
+                currency=t.currency or "KGS",
                 counterparty=t.from_user.name if t.from_user else None,
                 note=t.note,
                 created_at=t.created_at,
@@ -400,6 +401,7 @@ def build_user_history_entries(
             BalanceHistoryEntry(
                 kind="transfer_out",
                 amount=-Decimal(str(t.amount)),
+                currency=t.currency or "KGS",
                 counterparty=t.to_user.name if t.to_user else None,
                 note=t.note,
                 created_at=t.created_at,

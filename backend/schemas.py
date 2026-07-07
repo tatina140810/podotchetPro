@@ -650,6 +650,7 @@ class MoneyRequestOut(BaseModel):
 class MoneyTransferCreate(BaseModel):
     to_user_id: int
     amount: Decimal = Field(..., gt=0)
+    currency: str = Field(default="KGS", pattern=CURRENCY_PATTERN)
     note: Optional[str] = Field(default=None, max_length=500)
 
 
@@ -663,6 +664,8 @@ class MoneyTransferOut(BaseModel):
     to_user_id: int
     to_user_name: Optional[str] = None
     amount: Decimal
+    currency: str = "KGS"
+    amount_kgs: Optional[Decimal] = None
     note: Optional[str] = None
     created_at: datetime
 

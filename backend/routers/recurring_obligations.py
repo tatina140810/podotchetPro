@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user
 from database import get_db
-from models import RecurringObligation, User
+from models import Category, RecurringObligation, User
 from schemas import (
     RecurringObligationCreate,
     RecurringObligationOut,
@@ -42,6 +42,17 @@ def _assert_can_view(db: Session, me: User, target_id: int) -> None:
     target = db.get(User, target_id)
     if not target or target.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
+
+
+def _resolve_category_id(db: Session, org_id: int, category_id: Optional[int]) -> Optional[int]:
+    """Категория справочная: None допустимо. Если задана — должна быть в той же org,
+    иначе считаем её отсутствующей (None), чтобы не падать на чужом/удалённом id."""
+    if category_id is None:
+        return None
+    cat = db.get(Category, category_id)
+    if not cat or cat.org_id != org_id:
+        return None
+    return category_id
 
 
 def _own_or_404(db: Session, me: User, ob_id: int) -> RecurringObligation:
@@ -87,6 +98,7 @@ def create_obligation(
         amount=payload.amount,
         periodicity=payload.periodicity,
         comment=(payload.comment or "").strip() or None,
+        category_id=_resolve_category_id(db, me.org_id, payload.category_id),
         sort_order=int(next_order) + 1,
     )
     db.add(ob)
@@ -112,6 +124,8 @@ def update_obligation(
         ob.periodicity = data["periodicity"]
     if "comment" in data:
         ob.comment = (data["comment"] or "").strip() or None
+    if "category_id" in data:
+        ob.category_id = _resolve_category_id(db, me.org_id, data["category_id"])
     db.commit()
     db.refresh(ob)
     return ob

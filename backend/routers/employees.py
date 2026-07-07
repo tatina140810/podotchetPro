@@ -169,6 +169,7 @@ def _build_profile(db: Session, u: User, month: int, year: int, currency: str) -
             "amount": float(e.amount), "currency": e.currency,
             "amount_kgs": disp(kgs(e.amount, e.currency)),
             "comment": e.description,
+            "status": e.status,
         })
 
     # --- ЗАЯВКИ: мои (requester) и одобренные мной (approver) ---

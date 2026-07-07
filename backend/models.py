@@ -124,6 +124,11 @@ class User(Base):
     is_confidential: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.text("false"), nullable=False
     )
+    # Владелец платформы: доступ к супер-админ-панели (создание/удаление организаций,
+    # смена плана). ОТЛИЧАЕТСЯ от role=superadmin (та — org-уровневая). Ставится вручную.
+    is_platform_owner: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
     # Непосредственный руководитель: кому accountable отправляет заявки и от кого получает переводы.
     # Раньше называлось created_by_id; миграция rename сохраняет данные.
     supervisor_id: Mapped[Optional[int]] = mapped_column(
@@ -196,6 +201,12 @@ class Category(Base):
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Проектное пространство. NULL = обычная категория организации (видна всем).
+    # NOT NULL = приватная категория пространства, видна только владельцу пространства
+    # (и привилегированным ролям); в общий справочник /api/categories не попадает.
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     organization: Mapped[Organization] = relationship(back_populates="categories")
     parent: Mapped[Optional["Category"]] = relationship(
@@ -221,6 +232,12 @@ class Advance(Base):
     )  # org_funds (admin → employee) / transfer (employee → его подотчётный)
     purpose: Mapped[Optional[str]] = mapped_column(String(500))
     comment: Mapped[Optional[str]] = mapped_column(Text)
+    # Проектное пространство получателя (если он — владелец активного пространства).
+    # Проставляется сервером автоматически. Финансирование (выдача) остаётся видимым
+    # всем — это легальный приход средств, скрывается лишь детализация расходов.
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     issued_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -270,10 +287,39 @@ class Expense(Base):
     source_request_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("money_requests.id", ondelete="SET NULL")
     )
+    # Если расход авто-создан из выдачи (BalanceTopUp с реальной категорией) —
+    # ссылка на исходную выдачу. Нужна, чтобы синхронизировать/удалять этот авто-расход
+    # при редактировании или удалении выдачи (см. _sync_topup_expense в routers/transfers).
+    source_topup_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("balance_topups.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Подразделение расхода. Обязательно для новых записей (форсится в API);
     # NULL только у старых записей до миграции ("Не указано").
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # Проектное пространство. NULL = обычный расход организации (прежнее поведение).
+    # NOT NULL = расход внутри пространства: детализация (категория/описание/чеки)
+    # скрыта от всех, кроме владельца пространства и superadmin/gen_director.
+    # Проставляется СЕРВЕРОМ автоматически по владельцу записи (клиенту не доверяем).
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Чекбокс «Учесть как приход»: расход оплачен из личных средств без подотчёта —
+    # система создаёт парный технический приход на ту же сумму (Income), чтобы баланс
+    # подразделения/сотрудника не уходил в минус. auto_income_income_id — ссылка на него.
+    auto_income: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
+    auto_income_income_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("incomes.id", ondelete="SET NULL"), nullable=True
+    )
+    # «Расход из личных средств в счёт подразделения»: сотрудник оплатил из своих,
+    # без подотчёта. НЕ создаёт отдельный приход — в агрегате подразделения такой
+    # расход считается и приходом, и расходом (баланс подразделения не в минус,
+    # личный баланс не меняется). Это актуальная логика вместо auto_income.
+    is_personal_contribution: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
     )
     spent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
@@ -511,6 +557,10 @@ class BalanceTopUp(Base):
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="RESTRICT"), nullable=True, index=True
     )
+    # Проектное пространство получателя (для агрегата «Получено» пространства).
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     admin: Mapped[User] = relationship(foreign_keys=[admin_id])
@@ -574,6 +624,12 @@ class Income(Base):
     created_by_id: Mapped[int] = mapped_column(
         ForeignKey("users.id", ondelete="CASCADE"), nullable=False
     )
+    # Подразделение прихода. NULL у обычных приходов (исторически приходы вне
+    # подразделений). Заполняется у технических авто-приходов (чекбокс «Учесть как
+    # приход»), чтобы баланс подразделения сходился.
+    department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     date: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
@@ -597,16 +653,27 @@ class RecurringObligation(Base):
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
-    # monthly | weekly | one_time
+    # monthly | weekly | yearly | one_time
     periodicity: Mapped[str] = mapped_column(
         String(16), nullable=False, default="monthly", server_default="monthly"
     )
     comment: Mapped[Optional[str]] = mapped_column(Text)
+    # Категория — справочная, ни на что не влияет (только подсказка/группировка в списке).
+    # При удалении категории обнуляется (SET NULL), сама запись остаётся.
+    category_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     # Ручная сортировка (кнопки ↑/↓). По возрастанию, затем по id.
     sort_order: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    category: Mapped[Optional[Category]] = relationship()
+
+    @property
+    def category_name(self) -> Optional[str]:
+        return self.category.name if self.category else None
 
 
 class ExpectedIncome(Base):
@@ -686,6 +753,85 @@ class Notification(Base):
     is_read: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default="0", nullable=False, index=True
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), nullable=False, index=True
+    )
+
+
+# ===================== Проектные пространства =====================
+# Изолированная среда внутри организации: отдельный сотрудник (owner) ведёт свой
+# учёт со своими приватными категориями. Финансируется из общего бюджета через
+# стандартные выдачи/заявки (это видно всем), но ДЕТАЛИЗАЦИЯ расходов внутри
+# пространства скрыта от admin/auditor — им виден только агрегат по владельцу.
+# Деньги (итоги/балансы) при этом нигде не прячутся, скрывается лишь назначение.
+
+class ProjectWorkspace(Base):
+    __tablename__ = "project_workspaces"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    owner_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean, default=True, server_default=sa.text("true"), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    owner: Mapped[User] = relationship(foreign_keys=[owner_id])
+    members: Mapped[list["ProjectWorkspaceMember"]] = relationship(
+        back_populates="workspace", cascade="all,delete-orphan"
+    )
+
+
+class ProjectWorkspaceMember(Base):
+    __tablename__ = "project_workspace_members"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    workspace_id: Mapped[int] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    added_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    workspace: Mapped[ProjectWorkspace] = relationship(back_populates="members")
+    user: Mapped[User] = relationship(foreign_keys=[user_id])
+
+    __table_args__ = (
+        UniqueConstraint("workspace_id", "user_id", name="uq_workspace_member_pair"),
+    )
+
+
+class WorkspaceAuditLog(Base):
+    """Несокращаемый журнал действий с пространствами (создание/изменение/участники).
+    Гарантирует аудируемость даже при скрытой от ролей детализации расходов —
+    запись о движении/настройке всегда остаётся."""
+    __tablename__ = "workspace_audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    actor_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    action: Mapped[str] = mapped_column(String(48), nullable=False)
+    detail: Mapped[Optional[dict]] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False, index=True
     )

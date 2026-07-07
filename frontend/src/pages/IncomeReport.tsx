@@ -63,8 +63,10 @@ export default function IncomeReport() {
   // Какие источники раскрыты (ключ совпадает с группировкой бэкенда).
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  // Ключ группы — по нормализованному названию (совпадает с группировкой бэкенда):
+  // одинаковое имя = один источник, даже если часть приходов без привязки к справочнику.
   function sourceKey(s: SourceRow): string {
-    return s.source_id != null ? `id:${s.source_id}` : `txt:${(s.source || "—").trim().toLowerCase()}`;
+    return `nm:${(s.source || "—").trim().toLowerCase()}`;
   }
 
   function toggleSource(s: SourceRow) {
@@ -79,11 +81,8 @@ export default function IncomeReport() {
   // История по источнику — фильтруем уже загруженные позиции (без доп. запросов).
   function itemsForSource(s: SourceRow): IncomeItem[] {
     if (!data) return [];
-    return data.items.filter((it) =>
-      s.source_id != null
-        ? it.source_id === s.source_id
-        : it.source_id == null && (it.source || "—").trim().toLowerCase() === (s.source || "—").trim().toLowerCase()
-    );
+    const target = (s.source || "—").trim().toLowerCase();
+    return data.items.filter((it) => (it.source || "—").trim().toLowerCase() === target);
   }
 
   function reload() {

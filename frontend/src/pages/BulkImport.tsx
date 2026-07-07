@@ -5,7 +5,7 @@
  * Enter в любой ячейке последней строки добавляет новую строку.
  * Перед импортом — превью-сводка (сколько каких операций, сумма).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
@@ -24,15 +24,16 @@ type Op = "expense" | "income" | "topup";
 interface Row {
   type: Op;
   user_id: string;            // employee для expense / получатель для topup / получатель для income
-  department_id: string;      // подразделение — обязательно для expense/topup (income игнорирует)
+  department_id: string;      // подразделение — обязательно только для expense (topup/income — опционально)
   issued_by_id: string;       // только для topup — «кто выдал». Пустое = текущий admin.
   amount: string;
-  currency: "KGS" | "USD" | "RUB";
+  currency: "KGS" | "USD" | "EUR" | "RUB";
   category_id: string;        // для expense — id категории; для income/topup игнорируется
   source: string;             // для income — текстовое поле «Источник» (свободный ввод)
   source_id: string;          // для income — выбор из справочника источников ("" / "manual" / id)
   comment: string;            // комментарий к записи — для всех типов
   date: string;               // YYYY-MM-DD
+  is_personal_contribution: boolean;  // только для expense — «Расход из личных средств в счёт подразделения»
 }
 
 interface CategoryOpt { id: number; name: string; display_name?: string | null; parent_id?: number | null }
@@ -65,6 +66,7 @@ function makeEmptyRow(): Row {
     source_id: "",
     comment: "",
     date: new Date().toISOString().slice(0, 10),
+    is_personal_contribution: false,
   };
 }
 
@@ -132,8 +134,8 @@ export default function BulkImport() {
       const amt = parseFloat(r.amount.replace(",", "."));
       if (!isFinite(amt) || amt <= 0) continue;
       if (!r.user_id) continue;
-      // Подразделение обязательно для расходов и выдач (у прихода его нет).
-      if ((r.type === "expense" || r.type === "topup") && !r.department_id) continue;
+      // Подразделение обязательно только для расходов (у выдачи и прихода — нет).
+      if (r.type === "expense" && !r.department_id) continue;
       counts[r.type] += 1;
       if (r.currency === "KGS") total += amt;
     }
@@ -146,7 +148,7 @@ export default function BulkImport() {
         const amount = parseFloat(r.amount.replace(",", "."));
         if (!isFinite(amount) || amount <= 0) return null;
         if (!r.user_id) return null;
-        if ((r.type === "expense" || r.type === "topup") && !r.department_id) return null;
+        if (r.type === "expense" && !r.department_id) return null;
         const base = {
           type: r.type,
           amount,
@@ -158,6 +160,7 @@ export default function BulkImport() {
           base.department_id = Number(r.department_id);
           base.category_id = r.category_id ? Number(r.category_id) : null;
           base.description = r.comment || null;
+          base.is_personal_contribution = !!r.is_personal_contribution;
         } else if (r.type === "income") {
           base.received_by_id = Number(r.user_id);
           if (useSourceDirectory && r.source_id && r.source_id !== "manual") {
@@ -168,7 +171,7 @@ export default function BulkImport() {
           base.description = r.comment || null;
         } else {
           base.user_id = Number(r.user_id);
-          base.department_id = Number(r.department_id);
+          if (r.department_id) base.department_id = Number(r.department_id);
           base.note = r.comment || null;
           if (r.issued_by_id) base.issued_by_id = Number(r.issued_by_id);
           if (r.category_id) base.category_id = Number(r.category_id);
@@ -273,10 +276,10 @@ export default function BulkImport() {
                       value={r.department_id}
                       onChange={(e) => updateRow(idx, { department_id: e.target.value })}
                       onKeyDown={(e) => onKeyDown(e, idx)}
-                      style={!r.department_id ? { borderColor: "var(--danger)" } : undefined}
-                      title="Подразделение (обязательно)"
+                      style={r.type === "expense" && !r.department_id ? { borderColor: "var(--danger)" } : undefined}
+                      title={r.type === "expense" ? "Подразделение (обязательно)" : "Подразделение (необязательно)"}
                     >
-                      <option value="">— подразделение —</option>
+                      <option value="">{r.type === "expense" ? "— подразделение —" : "— нет —"}</option>
                       {departments.map((d) => (
                         <option key={d.id} value={d.id}>{d.name}</option>
                       ))}
@@ -295,11 +298,12 @@ export default function BulkImport() {
                 <td>
                   <select
                     value={r.currency}
-                    onChange={(e) => updateRow(idx, { currency: e.target.value as "KGS" | "USD" | "RUB" })}
+                    onChange={(e) => updateRow(idx, { currency: e.target.value as "KGS" | "USD" | "EUR" | "RUB" })}
                     onKeyDown={(e) => onKeyDown(e, idx)}
                   >
                     <option value="KGS">KGS</option>
                     <option value="USD">USD</option>
+                    <option value="EUR">EUR</option>
                     <option value="RUB">RUB</option>
                   </select>
                 </td>
@@ -379,6 +383,20 @@ export default function BulkImport() {
                     onKeyDown={(e) => onKeyDown(e, idx)}
                     placeholder="напр. «Аренда Q1»"
                   />
+                  {r.type === "expense" && (
+                    <label
+                      title="Расход из личных средств в счёт подразделения (учтётся как приход+расход)"
+                      style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 12, cursor: "pointer", color: "var(--muted)" }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={r.is_personal_contribution}
+                        onChange={(e) => updateRow(idx, { is_personal_contribution: e.target.checked })}
+                        style={{ width: "auto", margin: 0 }}
+                      />
+                      Из личных средств
+                    </label>
+                  )}
                 </td>
                 <td>
                   <input
@@ -627,6 +645,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
   const [employeeId, setEmployeeId] = useState<number | null>(null);
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [departmentId, setDepartmentId] = useState<number | null>(null);
+  const [kind, setKind] = useState("");  // "" = все типы; иначе expense|income|topup
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -646,6 +665,57 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     return colleagues.filter((c) => c.name.toLowerCase().includes(q)).slice(0, 10);
   }, [employeeQuery, employeeId, colleagues]);
 
+  // Параметры запроса по текущим фильтрам (без пагинации) — для «выбрать всё по фильтру».
+  const buildFilterParams = useCallback(() => {
+    const qs = new URLSearchParams();
+    if (employeeId !== null) qs.set("employee_id", String(employeeId));
+    if (categoryId !== null) qs.set("category_id", String(categoryId));
+    if (departmentId !== null) qs.set("department_id", String(departmentId));
+    if (kind) qs.set("kind", kind);
+    const norm = (s: string) => s.replace(/[\s ]/g, "").replace(",", ".");
+    const amtMin = parseFloat(norm(amountMin));
+    const amtMax = parseFloat(norm(amountMax));
+    if (isFinite(amtMin) && amtMin > 0) qs.set("amount_min", String(amtMin));
+    if (isFinite(amtMax) && amtMax > 0) qs.set("amount_max", String(amtMax));
+    if (dateFrom) qs.set("date_from", new Date(dateFrom).toISOString());
+    if (dateTo) qs.set("date_to", new Date(dateTo).toISOString());
+    return qs;
+  }, [employeeId, categoryId, departmentId, kind, amountMin, amountMax, dateFrom, dateTo]);
+
+  // Выбрать ВСЕ строки по текущему фильтру (по всем страницам) — чтобы нижняя
+  // плашка показала общую сумму. Тянем страницами по 200 до total.
+  const [selectingAll, setSelectingAll] = useState(false);
+  async function selectAllFiltered() {
+    setSelectingAll(true);
+    try {
+      const newSel = new Set<string>();
+      const newMeta: Record<string, { amount: number; currency: string }> = {};
+      const PAGE = 200;
+      let offset = 0;
+      while (true) {
+        const qs = buildFilterParams();
+        qs.set("limit", String(PAGE));
+        qs.set("offset", String(offset));
+        const r = await api<{ items: RecentOp[]; total: number }>(
+          `/api/admin/recent-operations?${qs.toString()}`
+        );
+        for (const o of r.items) {
+          const k = `${o.kind}-${o.id}`;
+          newSel.add(k);
+          newMeta[k] = { amount: o.amount, currency: o.currency };
+        }
+        offset += PAGE;
+        if (r.items.length === 0 || offset >= r.total) break;
+      }
+      setSelected(newSel);
+      setSelectedMeta(newMeta);
+    } catch (e: any) {
+      toast.show("error", e.message || "Ошибка");
+    } finally {
+      setSelectingAll(false);
+    }
+  }
+
   // Загрузка с фильтрами + дебаунс для текстовых/числовых полей
   useEffect(() => {
     const t = setTimeout(() => {
@@ -655,6 +725,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
       if (employeeId !== null) qs.set("employee_id", String(employeeId));
       if (categoryId !== null) qs.set("category_id", String(categoryId));
       if (departmentId !== null) qs.set("department_id", String(departmentId));
+      if (kind) qs.set("kind", kind);
       // Нормализуем: убираем пробелы (включая неразрывный 00A0) и заменяем запятую на точку.
       // Без этого "20 000" → parseFloat → 20, и фильтр пропускал записи <20k.
       const norm = (s: string) => s.replace(/[\s ]/g, "").replace(",", ".");
@@ -674,10 +745,10 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
         .catch((e) => setErr(e.message));
     }, 250);
     return () => clearTimeout(t);
-  }, [reloadKey, bump, page, employeeId, categoryId, departmentId, amountMin, amountMax, dateFrom, dateTo]);
+  }, [reloadKey, bump, page, employeeId, categoryId, departmentId, kind, amountMin, amountMax, dateFrom, dateTo]);
 
   // При смене фильтров — сбросить пагинацию на первую страницу
-  useEffect(() => { setPage(0); }, [employeeId, categoryId, departmentId, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
+  useEffect(() => { setPage(0); }, [employeeId, categoryId, departmentId, kind, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
 
   const KIND_LABEL: Record<string, string> = {
     expense: "Расход",
@@ -727,6 +798,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     setEmployeeQuery(""); setEmployeeId(null);
     setCategoryId(null);
     setDepartmentId(null);
+    setKind("");
     setAmountMin(""); setAmountMax("");
     setDateFrom(""); setDateTo("");
   }
@@ -801,6 +873,15 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
           </select>
         </div>
         <div>
+          <label>Тип</label>
+          <select value={kind} onChange={(e) => setKind(e.target.value)}>
+            <option value="">Все типы</option>
+            <option value="income">Приход</option>
+            <option value="expense">Расход</option>
+            <option value="topup">Выдача</option>
+          </select>
+        </div>
+        <div>
           <label>Сумма от</label>
           <input value={amountMin} onChange={(e) => setAmountMin(e.target.value)} inputMode="decimal" placeholder="0" />
         </div>
@@ -829,7 +910,16 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
           <table>
             <thead>
               <tr>
-                <th style={{ width: 32 }}></th>
+                <th style={{ width: 32 }}>
+                  <input
+                    type="checkbox"
+                    checked={total > 0 && selected.size >= total}
+                    disabled={selectingAll}
+                    onChange={(e) => (e.target.checked ? selectAllFiltered() : clearSelected())}
+                    style={{ width: "auto", margin: 0, cursor: "pointer" }}
+                    title="Выбрать все по фильтру (все страницы)"
+                  />
+                </th>
                 <th style={{ width: 110 }}>Дата</th>
                 <th style={{ width: 100 }}>Тип</th>
                 <th>Кто / Кому</th>

@@ -111,7 +111,7 @@ export default function EmployeeProfile() {
   const otherEditing = editingKey !== null;
 
   const tableProps = {
-    sym, fmt, canEdit, editingKey, setEditingKey,
+    sym, fmt, canEdit, canReview: isDirectorLevel(user?.role), editingKey, setEditingKey,
     colleagues, categories, employeeId: uid,
     employeeDeptIds: emp.department_ids || [], departments,
     onChanged: reload, onDeleted,

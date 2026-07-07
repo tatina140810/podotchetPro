@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from auth import (
+    get_current_user,
+    is_director_level,
     require_admin,
     require_director_level,
     require_director_or_auditor,
@@ -48,15 +50,24 @@ def _to_out(inc: Income) -> IncomeOut:
 def create_income(
     payload: IncomeCreate,
     db: Session = Depends(get_db),
-    me: User = Depends(require_director_level),
+    me: User = Depends(get_current_user),
 ):
-    """Записать приход. Только admin и gen_director.
+    """Записать приход.
+    - Директор/админ — на любого сотрудника (received_by_id).
+    - Подотчётный — приход можно записать ТОЛЬКО на себя.
+
     КГС-эквивалент фиксируется в момент создания (по текущему курсу), чтобы баланс
     не плавал при изменении курса. Если currency != KGS и курс не задан — 400.
 
     «Режим администратора» для Income не требует отдельного поля on_behalf_of:
     received_by_id и так указывает получателя, а created_by_id (= me) — кто внёс.
     """
+    # Подотчётный (и любой не-директор) может писать приход только на себя.
+    if not is_director_level(me) and payload.received_by_id != me.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Приход можно записать только на себя",
+        )
     receiver = db.get(User, payload.received_by_id)
     if not receiver or receiver.org_id != me.org_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Получатель не найден")

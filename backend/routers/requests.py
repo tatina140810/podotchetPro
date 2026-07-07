@@ -32,6 +32,7 @@ from schemas import (
     MoneyRequestUpdate,
 )
 from services.push_service import build_payload, send_push_to_user_sync
+from services.permissions import owner_isolation_ws_id, workspace_member_ids
 
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
@@ -142,7 +143,15 @@ def list_requests(
     me: User = Depends(get_current_user),
 ):
     q = db.query(MoneyRequest).filter(MoneyRequest.org_id == me.org_id)
-    if not is_director_or_auditor(me):
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:
+        # Владелец пространства: только заявки между участниками его пространства.
+        members = workspace_member_ids(db, iso)
+        q = q.filter(
+            MoneyRequest.requester_id.in_(members),
+            MoneyRequest.approver_id.in_(members),
+        )
+    elif not is_director_or_auditor(me):
         q = q.filter(
             or_(
                 MoneyRequest.requester_id == me.id,
@@ -188,20 +197,9 @@ def create_request(
     dep = db.get(Department, payload.department_id)
     if not dep or dep.org_id != me.org_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
-    # accountable может подавать заявку только из своих подразделений.
-    if me.role == "accountable":
-        is_member = (
-            db.query(EmployeeDepartment.id)
-            .filter(
-                EmployeeDepartment.employee_id == me.id,
-                EmployeeDepartment.department_id == payload.department_id,
-            )
-            .first()
-        )
-        if not is_member:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN, "Можно выбрать только своё подразделение"
-            )
+    # Подотчётный может подать заявку по ЛЮБОМУ подразделению своей организации
+    # (как и в форме расхода с all=true): не всегда привязан, но заявку создать должен.
+    # Граница «та же org» выше — достаточная.
 
     # Если это «заявка на расход» — категория обязательна.
     if payload.is_expense_on_approve and payload.expense_category_id is None:

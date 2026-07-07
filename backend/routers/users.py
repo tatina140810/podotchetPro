@@ -51,7 +51,12 @@ from services.balance import (
     spent_total,
     transferred_out_total,
 )
-from services.permissions import hidden_user_ids, visible_user_ids
+from services.permissions import (
+    hidden_user_ids,
+    owner_isolation_ws_id,
+    visible_user_ids,
+    workspace_member_ids,
+)
 
 
 router = APIRouter(prefix="/api/users", tags=["users"])
@@ -150,6 +155,9 @@ def list_users(
     hidden = hidden_user_ids(db, me)
     if hidden:  # Фича 2: конфиденциальные сотрудники не видны в общем списке
         q = q.filter(User.id.notin_(hidden))
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:  # владелец пространства видит только участников своего пространства
+        q = q.filter(User.id.in_(workspace_member_ids(db, iso)))
     users = q.order_by(User.created_at.desc()).all()
     rates = load_org_rates(db, me.org_id)  # один раз на весь list_users
     return [_with_balance(db, u, rates=rates) for u in users]
@@ -168,6 +176,9 @@ def list_colleagues(
     hidden = hidden_user_ids(db, me)
     if hidden:  # Фича 2: конфиденциальные скрыты из dropdown «КТО/КОМУ» и пр.
         q = q.filter(User.id.notin_(hidden))
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:  # владелец пространства — только участники пространства
+        q = q.filter(User.id.in_(workspace_member_ids(db, iso)))
     users = q.order_by(User.name.asc()).all()
     return [UserOut.model_validate(u) for u in users]
 
@@ -176,6 +187,11 @@ def list_colleagues(
 def create_user(payload: UserCreate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if db.query(User).filter(User.phone == payload.phone).first():
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Телефон уже занят")
+
+    # Роль superadmin может назначать ТОЛЬКО superadmin (иначе обычный admin выдал бы
+    # себе/другому superadmin и обошёл бы конфиденциальность — Фича 2).
+    if payload.role == "superadmin" and admin.role != "superadmin":
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Роль superadmin может назначать только superadmin")
 
     # Лимит плана: число сотрудников (пользователей) организации.
     org = db.get(Organization, admin.org_id)
@@ -600,6 +616,13 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
         raise HTTPException(
             status.HTTP_403_FORBIDDEN,
             "Менять конфиденциальность может только superadmin",
+        )
+    # Назначать роль superadmin (или менять роль существующего superadmin) может
+    # ТОЛЬКО superadmin — иначе обычный admin эскалировал бы права.
+    if "role" in data and (data["role"] == "superadmin" or u.role == "superadmin") and admin.role != "superadmin":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Менять роль superadmin может только superadmin",
         )
     if "supervisor_id" in data and data["supervisor_id"] is not None:
         sup = db.get(User, data["supervisor_id"])

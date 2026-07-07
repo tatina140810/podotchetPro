@@ -1,12 +1,14 @@
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin, require_auditor
 from database import get_db
 from models import Category, Department, User
 from schemas import CategoryCreate, CategoryOut, CategoryUpdate
+from services.permissions import member_active_workspace_id, owner_isolation_ws_id
 
 
 router = APIRouter(prefix="/api/categories", tags=["categories"])
@@ -74,12 +76,22 @@ def _validate_parent(
 
 @router.get("", response_model=List[CategoryOut])
 def list_categories(db: Session = Depends(get_db), me: User = Depends(get_current_user)):
-    cats = (
-        db.query(Category)
-        .filter(Category.org_id == me.org_id, Category.is_active.is_(True))
-        .order_by(Category.name)
-        .all()
+    base = db.query(Category).filter(
+        Category.org_id == me.org_id, Category.is_active.is_(True),
     )
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:
+        # Владелец пространства: только категории СВОЕГО пространства (изоляция).
+        base = base.filter(Category.workspace_id == iso)
+    else:
+        # Остальные: общие категории организации + категории своего пространства
+        # (если состоит участником — например подотчётный участник пространства).
+        member_ws = member_active_workspace_id(db, me.id, me.org_id)
+        ws_cond = [Category.workspace_id.is_(None)]
+        if member_ws:
+            ws_cond.append(Category.workspace_id == member_ws)
+        base = base.filter(or_(*ws_cond))
+    cats = base.order_by(Category.name).all()
     parents_by_id = {c.id: c for c in cats if c.parent_id is None}
     dept_names = _dept_names(db, me.org_id)
     return [_to_out(c, parents_by_id, dept_names) for c in cats]
@@ -89,7 +101,9 @@ def list_categories(db: Session = Depends(get_db), me: User = Depends(get_curren
 def create_category(payload: CategoryCreate, db: Session = Depends(get_db), me: User = Depends(require_auditor)):
     _validate_parent(db, me.org_id, payload.parent_id)
     _validate_department(db, me.org_id, payload.department_id)
-    c = Category(org_id=me.org_id, **payload.model_dump())
+    # Владелец пространства создаёт категорию внутри своего пространства (изоляция).
+    iso = owner_isolation_ws_id(db, me)
+    c = Category(org_id=me.org_id, workspace_id=iso, **payload.model_dump())
     db.add(c)
     db.commit()
     db.refresh(c)

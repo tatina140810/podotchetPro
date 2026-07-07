@@ -29,8 +29,10 @@ from routers import (
     requests as requests_router,
     settings as settings_router,
     specs,
+    super_panel,
     transfers,
     users,
+    workspaces,
 )
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -86,5 +88,7 @@ app.include_router(organizations.router)
 app.include_router(recurring_obligations.router)
 app.include_router(settings_router.router)
 app.include_router(admin_router.router)
+app.include_router(super_panel.router)
+app.include_router(workspaces.router)
 
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")

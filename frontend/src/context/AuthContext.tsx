@@ -12,9 +12,14 @@ export interface UserOut {
   role: Role;
   is_active: boolean;
   is_confidential?: boolean;
+  is_platform_owner?: boolean;
   supervisor_id: number | null;
   created_at: string;
   department_ids?: number[];
+  // Владелец проектного пространства — включает режим изоляции интерфейса.
+  workspace_owner?: boolean;
+  workspace_id?: number | null;
+  workspace_name?: string | null;
 }
 
 // Хелперы для проверки прав на фронте (зеркалят auth.py).

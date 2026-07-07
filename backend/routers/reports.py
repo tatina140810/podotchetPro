@@ -48,8 +48,36 @@ from services.balance import (
     to_kgs_expr,
 )
 from services.excel_export import build_workbook
-from services.permissions import hidden_user_ids
+from services.permissions import (
+    hidden_user_ids,
+    masked_workspace_category_ids,
+    owner_isolation_ws_id,
+    workspace_details_hidden,
+    workspace_member_ids,
+)
 from services.plan_limits import ensure_can_export
+
+
+def _iso(db, me):
+    """(ws_id, member_ids) если me — изолированный владелец пространства, иначе (None, None)."""
+    ws_id = owner_isolation_ws_id(db, me)
+    if ws_id is None:
+        return None, None
+    return ws_id, workspace_member_ids(db, ws_id)
+
+
+def _ws_view(db, me):
+    """(iso_ws, iso_members, exclude_ws) для отчётов:
+    - владелец пространства → iso_ws задан (видит только своё);
+    - общий admin/auditor → exclude_ws=True (данные пространств исключаются);
+    - superadmin/gen_director → всё (None/None/False, видят и общее, и пространства)."""
+    iso_ws, iso_members = _iso(db, me)
+    exclude_ws = iso_ws is None and workspace_details_hidden(db, me)
+    return iso_ws, iso_members, exclude_ws
+
+# Метка, которой подменяются приватные категории/описания пространств в отчётах
+# для ролей без права на детализацию (деньги-итоги при этом не меняются).
+_WS_MASK_LABEL = "Проектное пространство"
 
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
@@ -641,6 +669,23 @@ def _month_range(year: int, month: int) -> tuple[datetime, datetime]:
     return start, end
 
 
+def _resolve_report_range(
+    year: Optional[int], month: Optional[int],
+    date_from: Optional[date], date_to: Optional[date],
+) -> tuple[datetime, datetime]:
+    """Возвращает полуинтервал [start, end). Приоритет у произвольного периода
+    date_from/date_to (обе даты включительно); иначе берётся месяц year/month."""
+    if date_from and date_to:
+        if date_to < date_from:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Дата «по» раньше даты «с»")
+        start = datetime.combine(date_from, time.min)
+        end = datetime.combine(date_to, time.min) + timedelta(days=1)  # включаем весь день «по»
+        return start, end
+    if year and month:
+        return _month_range(year, month)
+    raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите месяц и год или период «с/по»")
+
+
 def _maybe_convert_usd(kgs_value: float, display_currency: str, usd_rate: Optional[Decimal]) -> float:
     """KGS → USD по курсу, если просят USD и курс задан. Иначе остаётся в KGS."""
     if display_currency == "USD" and usd_rate and usd_rate > 0:
@@ -651,6 +696,9 @@ def _maybe_convert_usd(kgs_value: float, display_currency: str, usd_rate: Option
 def _build_category_report(
     db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS",
     department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
+    mask_ws: bool = False,
+    iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
+    exclude_ws: bool = False,
 ) -> dict:
     """Отчёт «По категориям» — две секции (operational / other), без имён сотрудников.
     Расход = ТОЛЬКО Expense (TopUp не считается расходом компании, это движение).
@@ -684,10 +732,16 @@ def _build_category_report(
         exp_q = exp_q.filter(Expense.department_id == department_id)
     if hidden_ids:  # Фича 2: собственные расходы конфиденциальных не считаем
         exp_q = exp_q.filter(Expense.employee_id.notin_(hidden_ids))
+    if iso_ws is not None:  # изоляция владельца: только расходы его пространства
+        exp_q = exp_q.filter(Expense.workspace_id == iso_ws)
+    elif exclude_ws:  # общий admin/auditor: расходы пространств не показываем вовсе
+        exp_q = exp_q.filter(Expense.workspace_id.is_(None))
     all_expenses = exp_q.order_by(Expense.spent_at.desc()).all()
     categories_map: dict = {
         c.id: c for c in db.query(Category).filter(Category.org_id == org_id).all()
     }
+    # Маскировка приватных категорий пространств (имена не светим тем, кому нельзя).
+    ws_cat_ids = masked_workspace_category_ids(db, org_id) if mask_ws else set()
     dept_names: dict = {
         d.id: d.name for d in db.query(Department).filter(Department.org_id == org_id).all()
     }
@@ -697,13 +751,14 @@ def _build_category_report(
     for e in all_expenses:
         rate_for_cur = rates.get(e.currency, Decimal("0"))
         kgs_value = float(Decimal(str(e.amount)) * rate_for_cur)
+        is_ws = mask_ws and e.workspace_id is not None
         item = {
             "id": e.id,
             "department_id": e.department_id,
             "amount": float(e.amount),
             "currency": e.currency,
             "amount_kgs": kgs_value,
-            "description": e.description,
+            "description": None if is_ws else e.description,
             "spent_at": e.spent_at.isoformat(),
             "status": e.status,
         }
@@ -717,7 +772,10 @@ def _build_category_report(
         if total_kgs <= 0:
             continue
         cat = categories_map.get(cat_id) if cat_id else None
-        cat_name = cat.name if cat else "Без категории"
+        if cat_id in ws_cat_ids:
+            cat_name = _WS_MASK_LABEL
+        else:
+            cat_name = cat.name if cat else "Без категории"
         is_op = bool(cat.is_operational) if cat else False
         # Колонка «Подразделение» — по подразделению расходов строки:
         # одно подразделение → его имя; все NULL → «Общее»; разные → «Разные».
@@ -755,11 +813,13 @@ def _build_category_report(
     if department_id is not None:
         total_income_kgs = 0.0
     else:
-        total_income_kgs = float(
+        inc_q = (
             db.query(func.coalesce(func.sum(income_expr), 0))
             .filter(Income.org_id == org_id, Income.date >= start, Income.date < end)
-            .scalar() or 0
         )
+        if iso_members is not None:  # изоляция: только приходы участников пространства
+            inc_q = inc_q.filter(Income.received_by_id.in_(iso_members))
+        total_income_kgs = float(inc_q.scalar() or 0)
     total_income_display = _maybe_convert_usd(total_income_kgs, display_currency, usd_rate)
     result = total_income_display - total_expenses_display
 
@@ -783,12 +843,17 @@ def _build_category_report(
 # Остаток = накопительный к концу периода.
 
 def _build_employees_report(
-    db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS",
+    db: Session, org_id: int, year: Optional[int] = None, month: Optional[int] = None,
+    display_currency: str = "KGS",
     department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
+    start: Optional[datetime] = None, end: Optional[datetime] = None,
+    iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
+    exclude_ws: bool = False,
 ) -> dict:
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
-    start, end = _month_range(year, month)
+    if start is None or end is None:
+        start, end = _month_range(year, month)
     topup_expr = to_kgs_expr(BalanceTopUp.amount, BalanceTopUp.currency, rates)
     income_expr = to_kgs_expr(Income.amount, Income.currency, rates)
     expense_expr = to_kgs_expr(Expense.amount, Expense.currency, rates)
@@ -800,16 +865,22 @@ def _build_employees_report(
     )
     if department_id is not None:
         topup_in_q = topup_in_q.filter(BalanceTopUp.department_id == department_id)
+    if iso_ws is not None:
+        topup_in_q = topup_in_q.filter(BalanceTopUp.workspace_id == iso_ws)
+    elif exclude_ws:
+        topup_in_q = topup_in_q.filter(BalanceTopUp.workspace_id.is_(None))
     topup_in_rows = dict(topup_in_q.group_by(BalanceTopUp.user_id).all())
     # Income не привязан к подразделению — при фильтре исключаем.
     if department_id is not None:
         income_in_rows = {}
     else:
-        income_in_rows = dict(
+        inc_q = (
             db.query(Income.received_by_id, func.coalesce(func.sum(income_expr), 0))
             .filter(Income.org_id == org_id, Income.date >= start, Income.date < end)
-            .group_by(Income.received_by_id).all()
         )
+        if iso_members is not None:
+            inc_q = inc_q.filter(Income.received_by_id.in_(iso_members))
+        income_in_rows = dict(inc_q.group_by(Income.received_by_id).all())
     # transferred_out = TopUp где он admin_id (выдал из своих). С учётом transfer-Expense
     # это уже включает все «передачи» — у каждого transfer есть пара BalanceTopUp.
     topup_out_q = (
@@ -818,6 +889,10 @@ def _build_employees_report(
     )
     if department_id is not None:
         topup_out_q = topup_out_q.filter(BalanceTopUp.department_id == department_id)
+    if iso_ws is not None:
+        topup_out_q = topup_out_q.filter(BalanceTopUp.workspace_id == iso_ws)
+    elif exclude_ws:
+        topup_out_q = topup_out_q.filter(BalanceTopUp.workspace_id.is_(None))
     topup_out_rows = dict(topup_out_q.group_by(BalanceTopUp.admin_id).all())
     # spent = только конечные Expense (expense_type='expense'). Transfer-Expense НЕ
     # включаем — они уже учтены через topup_out_rows.
@@ -833,11 +908,17 @@ def _build_employees_report(
     )
     if department_id is not None:
         spent_q = spent_q.filter(Expense.department_id == department_id)
+    if iso_ws is not None:
+        spent_q = spent_q.filter(Expense.workspace_id == iso_ws)
+    elif exclude_ws:
+        spent_q = spent_q.filter(Expense.workspace_id.is_(None))
     spent_rows = dict(spent_q.group_by(Expense.employee_id).all())
 
     users_q = db.query(User).filter(User.org_id == org_id, User.is_active.is_(True))
     if hidden_ids:  # Фича 2: конфиденциальные не показываются в отчёте по сотрудникам
         users_q = users_q.filter(User.id.notin_(hidden_ids))
+    if iso_members is not None:  # изоляция владельца: только участники пространства
+        users_q = users_q.filter(User.id.in_(iso_members))
     users = users_q.all()
     rows: list[dict] = []
     for u in users:
@@ -868,6 +949,8 @@ def _build_employees_report(
     return {
         "year": year,
         "month": month,
+        "date_from": start.date().isoformat(),
+        "date_to": (end - timedelta(days=1)).date().isoformat(),
         "rows": rows,
         "currency": display_currency if (display_currency == "KGS" or usd_rate) else "KGS",
         "rate": float(usd_rate) if usd_rate else None,
@@ -880,6 +963,9 @@ def _build_employees_report(
 def _build_balance_report(
     db: Session, org_id: int, date_from: datetime, date_to: datetime, display_currency: str = "KGS",
     department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
+    mask_ws: bool = False,
+    iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
+    exclude_ws: bool = False,
 ) -> dict:
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
@@ -902,6 +988,8 @@ def _build_balance_report(
         )
         if hidden:  # Фича 2: приходы конфиденциальных не учитываем
             income_before_q = income_before_q.filter(Income.received_by_id.notin_(hidden))
+        if iso_members is not None:
+            income_before_q = income_before_q.filter(Income.received_by_id.in_(iso_members))
         income_before = float(income_before_q.scalar() or 0)
     exp_before_q = (
         db.query(func.coalesce(func.sum(expense_expr), 0))
@@ -915,6 +1003,10 @@ def _build_balance_report(
         exp_before_q = exp_before_q.filter(Expense.department_id == department_id)
     if hidden:  # Фича 2: собственные расходы конфиденциальных не учитываем
         exp_before_q = exp_before_q.filter(Expense.employee_id.notin_(hidden))
+    if iso_ws is not None:
+        exp_before_q = exp_before_q.filter(Expense.workspace_id == iso_ws)
+    elif exclude_ws:
+        exp_before_q = exp_before_q.filter(Expense.workspace_id.is_(None))
     expense_before = float(exp_before_q.scalar() or 0)
     opening_balance_kgs = income_before - expense_before
 
@@ -933,8 +1025,13 @@ def _build_balance_report(
         exp_period_q = exp_period_q.filter(Expense.department_id == department_id)
     if hidden:  # Фича 2
         exp_period_q = exp_period_q.filter(Expense.employee_id.notin_(hidden))
+    if iso_ws is not None:
+        exp_period_q = exp_period_q.filter(Expense.workspace_id == iso_ws)
+    elif exclude_ws:
+        exp_period_q = exp_period_q.filter(Expense.workspace_id.is_(None))
     for e in exp_period_q.all():
         kgs = _kgs(e.amount, e.currency)
+        is_ws = mask_ws and e.workspace_id is not None
         operations.append({
             "type": "expense",
             "id": e.id,
@@ -943,8 +1040,8 @@ def _build_balance_report(
             "amount": float(e.amount),
             "currency": e.currency,
             "amount_kgs": kgs,
-            "description": e.description,
-            "category": e.category.name if e.category else "Без категории",
+            "description": None if is_ws else e.description,
+            "category": _WS_MASK_LABEL if is_ws else (e.category.name if e.category else "Без категории"),
             "who": e.employee.name if e.employee else None,
             "color": "red",
         })
@@ -956,6 +1053,8 @@ def _build_balance_report(
         )
         if hidden:  # Фича 2: приходы конфиденциальных скрыты
             income_q = income_q.filter(Income.received_by_id.notin_(hidden))
+        if iso_members is not None:
+            income_q = income_q.filter(Income.received_by_id.in_(iso_members))
         income_rows = income_q.all()
     for i in income_rows:
         kgs = _kgs(i.amount, i.currency)
@@ -983,6 +1082,10 @@ def _build_balance_report(
             BalanceTopUp.admin_id.notin_(hidden),
             BalanceTopUp.user_id.notin_(hidden),
         )
+    if iso_ws is not None:
+        topup_period_q = topup_period_q.filter(BalanceTopUp.workspace_id == iso_ws)
+    elif exclude_ws:
+        topup_period_q = topup_period_q.filter(BalanceTopUp.workspace_id.is_(None))
     for t in topup_period_q.all():
         kgs = _kgs(t.amount, t.currency)
         operations.append({
@@ -1066,24 +1169,32 @@ def category_report(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_category_report(
         db, me.org_id, year, month, currency,
         department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+        mask_ws=False,
+        iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
     )
 
 
 @router.get("/employees")
 def employees_report(
-    year: int = Query(..., ge=2020, le=2100),
-    month: int = Query(..., ge=1, le=12),
+    year: Optional[int] = Query(default=None, ge=2020, le=2100),
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
     department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    start, end = _resolve_report_range(year, month, date_from, date_to)
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_employees_report(
         db, me.org_id, year, month, currency,
         department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+        start=start, end=end, iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
     )
 
 
@@ -1095,7 +1206,9 @@ def employees_report(
 
 def _build_department_report(
     db: Session, org_id: int, year: int, month: int, display_currency: str = "KGS",
-    hidden_ids: Optional[set] = None,
+    hidden_ids: Optional[set] = None, mask_ws: bool = False,
+    iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
+    exclude_ws: bool = False,
 ) -> dict:
     rates = load_org_rates(db, org_id)
     usd = rates.get("USD")
@@ -1121,6 +1234,10 @@ def _build_department_report(
     )
     if hidden:
         exp_base = exp_base.filter(Expense.employee_id.notin_(hidden))
+    if iso_ws is not None:
+        exp_base = exp_base.filter(Expense.workspace_id == iso_ws)
+    elif exclude_ws:
+        exp_base = exp_base.filter(Expense.workspace_id.is_(None))
 
     top_base = db.query(BalanceTopUp).filter(
         BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end
@@ -1129,6 +1246,10 @@ def _build_department_report(
         top_base = top_base.filter(
             BalanceTopUp.user_id.notin_(hidden), BalanceTopUp.admin_id.notin_(hidden)
         )
+    if iso_ws is not None:
+        top_base = top_base.filter(BalanceTopUp.workspace_id == iso_ws)
+    elif exclude_ws:
+        top_base = top_base.filter(BalanceTopUp.workspace_id.is_(None))
 
     # Расход и кол-во по department_id (None — отдельный ключ).
     spent_by: dict = {}
@@ -1170,6 +1291,24 @@ def _build_department_report(
     ):
         emp_recv[(dep, uid)] = float(total or 0)
 
+    # «Расходы из личных средств в счёт подразделения» (is_personal_contribution):
+    # их сумму засчитываем в ПРИХОД подразделения/сотрудника (расход уже учтён выше).
+    # Так такой расход = и приход, и расход → подразделение не уходит в минус, а
+    # личный баланс сотрудника и его приходы не трогаются. Берём ту же базу exp_base,
+    # чтобы приход в точности совпал с расходом по этим операциям.
+    for dep, total in (
+        exp_base.with_entities(Expense.department_id, func.coalesce(func.sum(exp_kgs), 0))
+        .filter(Expense.is_personal_contribution.is_(True))
+        .group_by(Expense.department_id).all()
+    ):
+        recv_by[dep] = recv_by.get(dep, 0.0) + float(total or 0)
+    for dep, uid, total in (
+        exp_base.with_entities(Expense.department_id, Expense.employee_id, func.coalesce(func.sum(exp_kgs), 0))
+        .filter(Expense.is_personal_contribution.is_(True))
+        .group_by(Expense.department_id, Expense.employee_id).all()
+    ):
+        emp_recv[(dep, uid)] = emp_recv.get((dep, uid), 0.0) + float(total or 0)
+
     # Кто имеет активность в подразделении (для полноты списка — расход/приход мог
     # пометить подразделением сотрудника, который в нём не состоит).
     act_by_dep: dict = {}
@@ -1202,9 +1341,19 @@ def _build_department_report(
     )
 
     cat_names = {c.id: c.name for c in db.query(Category).filter(Category.org_id == org_id).all()}
+    if mask_ws:  # приватные категории пространств — под общей меткой
+        for cid in masked_workspace_category_ids(db, org_id):
+            if cid in cat_names:
+                cat_names[cid] = _WS_MASK_LABEL
 
+    dept_q = db.query(Department).filter(Department.org_id == org_id)
+    if iso_ws is not None or exclude_ws:
+        # Изоляция: только подразделения с активностью в текущем срезе
+        # (у владельца — его пространство; у общего админа — вне пространств).
+        active_dep_ids = {d for d in (set(spent_by) | set(recv_by)) if d is not None}
+        dept_q = dept_q.filter(Department.id.in_(active_dep_ids or {-1}))
     departments_out: list[dict] = []
-    for d in db.query(Department).filter(Department.org_id == org_id).order_by(Department.name).all():
+    for d in dept_q.order_by(Department.name).all():
         spent_d = spent_by.get(d.id, 0.0)
         recv_d = recv_by.get(d.id, 0.0)
         # топ-5 категорий + «Прочее»
@@ -1272,7 +1421,13 @@ def department_report(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
-    return _build_department_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
+    return _build_department_report(
+        db, me.org_id, year, month, currency,
+        hidden_ids=hidden_user_ids(db, me),
+        mask_ws=False,
+        iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+    )
 
 
 @router.get("/by-department/export")
@@ -1284,7 +1439,13 @@ def department_report_export(
     me: User = Depends(require_director_or_auditor),
 ):
     ensure_can_export(db, me)
-    data = _build_department_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
+    data = _build_department_report(
+        db, me.org_id, year, month, currency,
+        hidden_ids=hidden_user_ids(db, me),
+        mask_ws=False,
+        iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+    )
     sym = "$" if data["currency"] == "USD" else "с"
     head_font = _Font(bold=True, color="FFFFFF")
     head_fill = _PatternFill("solid", fgColor="4F46E5")
@@ -1360,6 +1521,9 @@ def incomes_report(
     hidden = hidden_user_ids(db, me)
     if hidden:
         q = q.filter(Income.received_by_id.notin_(hidden))
+    _iso_ws, _iso_members = _iso(db, me)
+    if _iso_members is not None:  # изоляция владельца: приходы только участников
+        q = q.filter(Income.received_by_id.in_(_iso_members))
     if start:
         q = q.filter(Income.date >= start)
     if end:
@@ -1388,11 +1552,20 @@ def incomes_report(
             "received_by_id": i.received_by_id,
             "created_by_name": i.created_by.name if i.created_by else None,
         })
-        key = f"id:{i.source_id}" if i.source_id else f"txt:{(i.source or '—').strip().lower()}"
+        # Группируем по нормализованному НАЗВАНИЮ источника: одинаковое имя = один
+        # источник, даже если часть приходов привязана к справочнику (source_id),
+        # а часть введена тем же словом вручную (source_id пустой).
+        key = f"nm:{(i.source or '—').strip().lower()}"
         bucket = by_source.setdefault(
             key,
-            {"source_id": i.source_id, "source": i.source or "—", "total_kgs": 0.0, "count": 0},
+            {"source_id": i.source_id, "source": (i.source or "—").strip(), "total_kgs": 0.0, "count": 0},
         )
+        # Если группа началась с текстового прихода, но встретился привязанный к
+        # справочнику — берём его source_id (для ссылки/канонического названия).
+        if bucket["source_id"] is None and i.source_id is not None:
+            bucket["source_id"] = i.source_id
+            if i.source:
+                bucket["source"] = i.source.strip()
         bucket["total_kgs"] += kgs_value
         bucket["count"] += 1
 
@@ -1434,9 +1607,12 @@ def balance_report(
         date_to = date_to - timedelta(days=1)
     df = datetime.combine(date_from, time.min)
     dt = datetime.combine(date_to + timedelta(days=1), time.min)
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_balance_report(
         db, me.org_id, df, dt, currency,
         department_id=department_id, hidden_ids=hidden_user_ids(db, me),
+        mask_ws=False,
+        iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
     )
 
 
@@ -1451,7 +1627,13 @@ def category_report_xlsx(
     me: User = Depends(require_director_or_auditor),
 ):
     ensure_can_export(db, me)
-    data = _build_category_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
+    data = _build_category_report(
+        db, me.org_id, year, month, currency,
+        hidden_ids=hidden_user_ids(db, me),
+        mask_ws=False,
+        iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+    )
     sym = "$" if data["currency"] == "USD" else "с"
 
     wb = _Workbook()
@@ -1511,14 +1693,22 @@ def category_report_xlsx(
 
 @router.get("/employees.xlsx")
 def employees_report_xlsx(
-    year: int = Query(..., ge=2020, le=2100),
-    month: int = Query(..., ge=1, le=12),
+    year: Optional[int] = Query(default=None, ge=2020, le=2100),
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
     ensure_can_export(db, me)
-    data = _build_employees_report(db, me.org_id, year, month, currency, hidden_ids=hidden_user_ids(db, me))
+    start, end = _resolve_report_range(year, month, date_from, date_to)
+    iso_ws, iso_members, exclude_ws = _ws_view(db, me)
+    data = _build_employees_report(
+        db, me.org_id, year, month, currency,
+        hidden_ids=hidden_user_ids(db, me), start=start, end=end,
+        iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+    )
     sym = "$" if data["currency"] == "USD" else "с"
     wb = _Workbook()
     ws = wb.active
@@ -1533,10 +1723,34 @@ def employees_report_xlsx(
     ws.append([f"Валюта: {sym}", "", "", "", "", ""])
     for col_idx, w in enumerate([24, 14, 18, 14, 14, 14], start=1):
         ws.column_dimensions[ws.cell(row=1, column=col_idx).column_letter].width = w
+
+    # Лист 2: детализация — ВСЕ операции каждого сотрудника за период (как в развёртке
+    # на экране). Суммы — в исходных валютах, без конвертации. Это решает «Excel не
+    # показывает весь расход»: на первом листе только итоги, здесь — все строки.
+    from routers.users import build_user_history_entries  # избегаем циклического импорта
+    ws2 = wb.create_sheet("Детализация")
+    ws2.append(["Сотрудник", "Дата", "Тип", "Кто/Категория", "Сумма", "Валюта", "Описание"])
+    for cell in ws2[1]:
+        cell.font = _Font(bold=True, color="FFFFFF")
+        cell.fill = _PatternFill("solid", fgColor="4F46E5")
+    for r in data["rows"]:
+        for e in build_user_history_entries(db, me.org_id, r["user_id"], start, end):
+            ws2.append([
+                r["name"],
+                e.created_at.strftime("%Y-%m-%d") if e.created_at else "",
+                _KIND_RU.get(e.kind, e.kind),
+                e.counterparty or "",
+                float(e.amount),
+                e.currency or "KGS",
+                e.note or "",
+            ])
+    for col_idx, w in enumerate([22, 12, 22, 24, 14, 8, 40], start=1):
+        ws2.column_dimensions[ws2.cell(row=1, column=col_idx).column_letter].width = w
+
     buf = _io.BytesIO()
     wb.save(buf)
     buf.seek(0)
-    fname = f"report_employees_{year}_{month:02d}.xlsx"
+    fname = f"report_employees_{data['date_from']}_{data['date_to']}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1560,12 +1774,14 @@ _KIND_RU = {
 @router.get("/employees/{user_id}/details.xlsx")
 def employee_details_xlsx(
     user_id: int,
-    year: int = Query(..., ge=2020, le=2100),
-    month: int = Query(..., ge=1, le=12),
+    year: Optional[int] = Query(default=None, ge=2020, le=2100),
+    month: Optional[int] = Query(default=None, ge=1, le=12),
+    date_from: Optional[date] = Query(default=None),
+    date_to: Optional[date] = Query(default=None),
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
-    """Excel-файл с развёрткой операций сотрудника за выбранный месяц.
+    """Excel-файл с развёрткой операций сотрудника за выбранный период.
     Используется кнопкой рядом с каждым сотрудником в /reports/employees."""
     ensure_can_export(db, me)
     from routers.users import build_user_history_entries  # избежать циклического импорта при загрузке модуля
@@ -1576,7 +1792,7 @@ def employee_details_xlsx(
     if user_id in hidden_user_ids(db, me):  # Фича 2: выгрузка конфиденциального скрыта
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
 
-    start, end = _month_range(year, month)
+    start, end = _resolve_report_range(year, month, date_from, date_to)
     entries = build_user_history_entries(db, me.org_id, u.id, start, end)
 
     wb = _Workbook()
@@ -1615,9 +1831,10 @@ def employee_details_xlsx(
     buf.seek(0)
     # filename="..." требует latin-1, поэтому ASCII-fallback по user_id.
     # filename*=UTF-8''... — реальное имя сотрудника (кириллица URL-кодируется).
-    ascii_fname = f"employee_{u.id}_{year}_{month:02d}.xlsx"
+    period = f"{start.date().isoformat()}_{(end - timedelta(days=1)).date().isoformat()}"
+    ascii_fname = f"employee_{u.id}_{period}.xlsx"
     pretty_name = (u.name or f"user{u.id}").replace('"', "'")
-    utf8_fname = f"{pretty_name}_{year}_{month:02d}.xlsx"
+    utf8_fname = f"{pretty_name}_{period}.xlsx"
     return StreamingResponse(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

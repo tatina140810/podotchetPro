@@ -28,9 +28,11 @@ from models import (
     EmployeeSpec,
     Expense,
     ExpenseReceipt,
+    Income,
     User,
 )
 from schemas import (
+    ExpensePersonalContributionToggle,
     ExpenseCreate,
     ExpenseOut,
     ExpenseReceiptCreate,
@@ -39,7 +41,15 @@ from schemas import (
     ExpenseUpdate,
 )
 from services.exchange import get_current_rate
-from services.permissions import hidden_user_ids, visible_user_ids
+from services.permissions import (
+    hidden_user_ids,
+    member_active_workspace_id,
+    owner_isolation_ws_id,
+    visible_user_ids,
+    visible_workspace_ids,
+    workspace_department_ids,
+    workspace_expense_clause,
+)
 from services.plan_limits import ensure_can_export
 
 
@@ -47,6 +57,30 @@ router = APIRouter(prefix="/api/expenses", tags=["expenses"])
 settings = get_settings()
 
 ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"}
+
+
+def _apply_workspace_filter(q, db: Session, me: User):
+    """Видимость расходов с учётом проектных пространств.
+    - владелец пространства → строго только его пространство (изоляция);
+    - остальные → скрыть построчную детализацию чужих пространств."""
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:
+        return q.filter(Expense.workspace_id == iso)
+    clause = workspace_expense_clause(visible_workspace_ids(db, me))
+    if clause is not None:
+        q = q.filter(clause)
+    return q
+
+
+def _workspace_blocked(db: Session, me: User, e: Expense) -> bool:
+    """True, если расход недоступен me по правилам пространств."""
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:
+        return e.workspace_id != iso  # владелец видит только своё пространство
+    if e.workspace_id is None:
+        return False
+    vis = visible_workspace_ids(db, me)
+    return vis is not None and e.workspace_id not in vis
 
 
 def _to_out(e: Expense) -> ExpenseOut:
@@ -78,6 +112,7 @@ def list_expenses(
     hidden = hidden_user_ids(db, me)
     if hidden:  # Фича 2: расходы конфиденциальных сотрудников полностью скрыты
         q = q.filter(Expense.employee_id.notin_(hidden))
+    q = _apply_workspace_filter(q, db, me)  # детализация чужих пространств скрыта
     if employee_id:
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
@@ -113,6 +148,7 @@ def export_expenses_xlsx(
     hidden = hidden_user_ids(db, me)
     if hidden:  # Фича 2: расходы конфиденциальных сотрудников скрыты и в экспорте
         q = q.filter(Expense.employee_id.notin_(hidden))
+    q = _apply_workspace_filter(q, db, me)  # детализация чужих пространств скрыта и в экспорте
     if employee_id:
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
@@ -240,21 +276,11 @@ def create_expense(
     dep = db.get(Department, department_id)
     if not dep or dep.org_id != me.org_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
-    # accountable может вносить расход только в свои подразделения.
-    if me.role == "accountable":
-        is_member = (
-            db.query(EmployeeDepartment.id)
-            .filter(
-                EmployeeDepartment.employee_id == me.id,
-                EmployeeDepartment.department_id == department_id,
-            )
-            .first()
-        )
-        if not is_member:
-            raise HTTPException(
-                status.HTTP_403_FORBIDDEN,
-                "Можно выбрать только своё подразделение",
-            )
+    # Подотчётный может выбрать ЛЮБОЕ подразделение своей организации (как и предполагает
+    # выпадающий список с all=true и путь редактирования расхода): сотрудник не всегда
+    # привязан к подразделению, но расход внести должен. Изоляция проектных пространств
+    # обеспечивается отдельно (scoped-список подразделений участника пространства).
+    # Проверка «та же org» выше — достаточная граница.
 
     # Если указан получатель — это «передача» (transfer).
     # Создаём пару: Expense(expense_type='transfer', to_user_id=X) у источника +
@@ -307,12 +333,17 @@ def create_expense(
         or (spec is not None and not spec.requires_approval)
     )
     employee_id = on_behalf.id if on_behalf else me.id
+    # Проектное пространство определяет СЕРВЕР по записи (клиенту не доверяем):
+    # если сотрудник — УЧАСТНИК активного пространства (владелец или подотчётный),
+    # расход уходит в это пространство.
+    workspace_id = member_active_workspace_id(db, employee_id, me.org_id)
     e = Expense(
         org_id=me.org_id,
         employee_id=employee_id,
         advance_id=payload.advance_id,
         category_id=payload.category_id,
         department_id=department_id,
+        workspace_id=workspace_id,
         amount=payload.amount,
         currency=payload.currency,
         amount_kgs=amount_kgs,
@@ -323,6 +354,7 @@ def create_expense(
         recorded_by_id=me.id if on_behalf else None,
         to_user_id=recipient.id if recipient else None,
         expense_type="transfer" if recipient else "expense",
+        is_personal_contribution=payload.is_personal_contribution and recipient is None,
         spent_at=payload.spent_at or datetime.utcnow(),
     )
     db.add(e)
@@ -367,6 +399,8 @@ def get_expense(expense_id: int, db: Session = Depends(get_db), me: User = Depen
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
     if e.employee_id in hidden_user_ids(db, me):  # Фича 2: чужой конфиденциальный расход
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _workspace_blocked(db, me, e):  # детализация чужого пространства
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     return _to_out(e)
 
 
@@ -406,6 +440,32 @@ def update_expense(
             from decimal import Decimal as _D
             e.amount_kgs = _D(str(e.amount)) * rate
 
+    db.commit()
+    db.refresh(e)
+    return _to_out(e)
+
+
+@router.post("/{expense_id}/personal-contribution", response_model=ExpenseOut)
+def toggle_personal_contribution(
+    expense_id: int,
+    payload: ExpensePersonalContributionToggle,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """Пометить/снять «Расход из личных средств в счёт подразделения».
+    Флаг НЕ создаёт приход — он влияет только на агрегат подразделения (такой расход
+    считается одновременно приходом и расходом). Личный баланс сотрудника и его
+    приходы не трогаются. Позволяет руками проставлять вклады из детализации."""
+    e = db.get(Expense, expense_id)
+    if not e or e.org_id != me.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _workspace_blocked(db, me, e):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if not is_director_or_auditor(me) and e.employee_id != me.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
+    if e.expense_type == "transfer":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Передача не может быть личным вкладом")
+    e.is_personal_contribution = bool(payload.enabled)
     db.commit()
     db.refresh(e)
     return _to_out(e)
@@ -473,6 +533,8 @@ def _load_expense_visible(db: Session, me: User, expense_id: int) -> Expense:
     if visible is not None and e.employee_id not in visible:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
     if e.employee_id in hidden_user_ids(db, me):  # Фича 2
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _workspace_blocked(db, me, e):  # детализация чужого пространства
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     return e
 

@@ -4,6 +4,7 @@ import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
 import { listDepartments, type Department } from "../api/departments";
+import EmployeeDetailRows from "./EmployeeDetailRows";
 
 interface EmployeeRow {
   user_id: number;
@@ -16,8 +17,10 @@ interface EmployeeRow {
 }
 
 interface Report {
-  year: number;
-  month: number;
+  year: number | null;
+  month: number | null;
+  date_from?: string;
+  date_to?: string;
   rows: EmployeeRow[];
   currency: "KGS" | "USD";
   rate: number | null;
@@ -28,11 +31,20 @@ const MONTH_RU_FULL = [
   "Июль", "Август", "Сентябрь", "Октябрь", "Ноябрь", "Декабрь",
 ];
 
+// YYYY-MM-DD по локальному времени (без сдвига часового пояса, как у toISOString)
+function ymd(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
 export default function EmployeesReport() {
   const toast = useToast();
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
+  // Режим периода: "month" — месяц+год (как было), "range" — произвольный диапазон дат.
+  const [mode, setMode] = useState<"month" | "range">("month");
+  const [dateFrom, setDateFrom] = useState(() => ymd(new Date(today.getFullYear(), today.getMonth(), 1)));
+  const [dateTo, setDateTo] = useState(() => ymd(today));
   const { display } = useDisplayCurrency();
   const [data, setData] = useState<Report | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -52,31 +64,42 @@ export default function EmployeesReport() {
       if (next.has(uid)) next.delete(uid); else next.add(uid);
       return next;
     });
-    // Подгружаем детали по требованию — только операции выбранного месяца.
+    // Подгружаем детали по требованию — только операции выбранного периода.
     if (!details[uid]) {
-      const dateFrom = new Date(year, month - 1, 1).toISOString();
-      const dateTo = new Date(year, month, 1).toISOString();  // первый день след. месяца (exclusive)
-      api<any>(`/api/users/${uid}/balance?date_from=${dateFrom}&date_to=${dateTo}`)
+      let from: string, to: string;
+      if (mode === "range" && dateFrom && dateTo) {
+        from = new Date(dateFrom + "T00:00:00").toISOString();
+        to = new Date(new Date(dateTo + "T00:00:00").getTime() + 86400000).toISOString();  // конец дня «по» (exclusive)
+      } else {
+        from = new Date(year, month - 1, 1).toISOString();
+        to = new Date(year, month, 1).toISOString();  // первый день след. месяца (exclusive)
+      }
+      api<any>(`/api/users/${uid}/balance?date_from=${from}&date_to=${to}`)
         .then((d) => setDetails((prev) => ({ ...prev, [uid]: d.entries || [] })))
         .catch(() => setDetails((prev) => ({ ...prev, [uid]: [] })));
     }
   }
 
-  const KIND_RU: Record<string, string> = {
-    topup: "Выдача (получил)",
-    topup_out: "Выдача (отдал)",
-    income: "Приход",
-    transfer_in: "↙ Получил перевод",
-    transfer_out: "↗ Передал",
-    request_approved: "Заявка (получено)",
-    request_approved_out: "Заявка (выдал)",
-    expense: "Расход",
-  };
+  const rangeReady = mode === "month" || (!!dateFrom && !!dateTo);
+
+  // Query-параметры периода для всех эндпоинтов отчёта (JSON и xlsx).
+  function periodQuery(): string {
+    return mode === "range" && dateFrom && dateTo
+      ? `date_from=${dateFrom}&date_to=${dateTo}`
+      : `year=${year}&month=${month}`;
+  }
+  // Суффикс имени файла Excel.
+  function fileSuffix(): string {
+    return mode === "range" && dateFrom && dateTo
+      ? `${dateFrom}_${dateTo}`
+      : `${year}_${String(month).padStart(2, "0")}`;
+  }
 
   function reload() {
     setErr(null);
+    if (!rangeReady) return;  // ждём, пока заданы обе даты периода
     const dep = departmentId ? `&department_id=${departmentId}` : "";
-    api<Report>(`/api/reports/employees?year=${year}&month=${month}&currency=${display}${dep}&_t=${Date.now()}`)
+    api<Report>(`/api/reports/employees?${periodQuery()}&currency=${display}${dep}&_t=${Date.now()}`)
       .then(setData)
       .catch((e) => setErr(e.message));
   }
@@ -87,14 +110,14 @@ export default function EmployeesReport() {
     setExpanded(new Set());
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [year, month, display, departmentId]);
+  }, [year, month, mode, dateFrom, dateTo, display, departmentId]);
 
   async function onExport() {
     setExporting(true);
     try {
       await downloadFile(
-        `/api/reports/employees.xlsx?year=${year}&month=${month}&currency=${display}`,
-        `employees_${year}_${String(month).padStart(2, "0")}_${display}.xlsx`,
+        `/api/reports/employees.xlsx?${periodQuery()}&currency=${display}`,
+        `employees_${fileSuffix()}_${display}.xlsx`,
       );
     } catch (e: any) {
       toast.show("error", e.message || "Не удалось скачать");
@@ -109,8 +132,8 @@ export default function EmployeesReport() {
     try {
       const safeName = name.replace(/[^\wа-яА-ЯёЁ-]+/g, "_");
       await downloadFile(
-        `/api/reports/employees/${uid}/details.xlsx?year=${year}&month=${month}`,
-        `${safeName}_${year}_${String(month).padStart(2, "0")}.xlsx`,
+        `/api/reports/employees/${uid}/details.xlsx?${periodQuery()}`,
+        `${safeName}_${fileSuffix()}.xlsx`,
       );
     } catch (e: any) {
       toast.show("error", e.message || "Не удалось скачать");
@@ -136,17 +159,41 @@ export default function EmployeesReport() {
       <div className="card" style={{ marginBottom: 16 }}>
         <div className="row" style={{ gap: 10, flexWrap: "wrap", alignItems: "flex-end" }}>
           <div>
-            <label>Месяц</label>
-            <select value={month} onChange={(e) => setMonth(Number(e.target.value))}>
-              {MONTH_RU_FULL.map((m, i) => (
-                <option key={i} value={i + 1}>{m}</option>
-              ))}
+            <label>Период</label>
+            <select value={mode} onChange={(e) => setMode(e.target.value as "month" | "range")}>
+              <option value="month">За месяц</option>
+              <option value="range">Произвольный</option>
             </select>
           </div>
-          <div>
-            <label>Год</label>
-            <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 90 }} />
-          </div>
+          {mode === "month" ? (
+            <>
+              <div>
+                <label>Месяц</label>
+                <select value={month} onChange={(e) => setMonth(Number(e.target.value))}>
+                  {MONTH_RU_FULL.map((m, i) => (
+                    <option key={i} value={i + 1}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label>Год</label>
+                <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 90 }} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label>С</label>
+                <input type="date" value={dateFrom} max={dateTo || undefined}
+                  onChange={(e) => setDateFrom(e.target.value)} />
+              </div>
+              <div>
+                <label>По</label>
+                <input type="date" value={dateTo} min={dateFrom || undefined}
+                  onChange={(e) => setDateTo(e.target.value)} />
+              </div>
+            </>
+          )}
           <div>
             <label>Подразделение</label>
             <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value ? Number(e.target.value) : "")}>
@@ -224,47 +271,9 @@ export default function EmployeesReport() {
                   {expanded.has(r.user_id) && (
                     <tr>
                       <td colSpan={6} style={{ background: "var(--bg-subtle, rgba(255,255,255,0.03))", padding: 12 }}>
-                        {details[r.user_id] === undefined && <div className="muted">Загрузка деталей...</div>}
-                        {details[r.user_id] !== undefined && details[r.user_id]!.length === 0 && (
-                          <div className="muted">Деталей нет</div>
-                        )}
-                        {details[r.user_id] && details[r.user_id]!.length > 0 && (
-                          <table>
-                            <thead>
-                              <tr>
-                                <th>Дата</th>
-                                <th>Тип</th>
-                                <th>Кто/Категория</th>
-                                <th style={{ textAlign: "right" }}>Сумма</th>
-                                <th>Описание</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {details[r.user_id]!.map((d: any, idx: number) => {
-                                const amt = Number(d.amount);
-                                const cur = (d.currency || "KGS") as string;
-                                const symNative =
-                                  cur === "USD" ? "$" : cur === "RUB" ? "₽" : cur === "EUR" ? "€" : "с";
-                                return (
-                                  <tr key={idx}>
-                                    <td className="muted" style={{ fontSize: 12 }}>
-                                      {d.created_at ? new Date(d.created_at).toLocaleDateString("ru-RU") : ""}
-                                    </td>
-                                    <td style={{ fontSize: 12 }}>{KIND_RU[d.kind] || d.kind}</td>
-                                    <td style={{ fontSize: 12 }}>{d.counterparty || "—"}</td>
-                                    <td style={{
-                                      textAlign: "right", fontWeight: 600,
-                                      color: amt < 0 ? "var(--danger)" : "var(--success)",
-                                    }}>
-                                      {amt > 0 ? "+" : ""}{amt.toLocaleString("ru-RU")} {symNative}
-                                    </td>
-                                    <td className="muted" style={{ fontSize: 12 }}>{d.note || ""}</td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        )}
+                        <div style={{ maxHeight: "60vh", overflowY: "auto" }}>
+                          <EmployeeDetailRows entries={details[r.user_id]} />
+                        </div>
                       </td>
                     </tr>
                   )}

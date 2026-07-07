@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from auth import get_current_user, is_director_or_auditor, require_auditor
+from auth import can_manage_workspaces, get_current_user, is_director_or_auditor, require_auditor
 from database import get_db
 from models import (
     BalanceTopUp,
@@ -25,9 +25,48 @@ from models import (
     User,
 )
 from schemas import DepartmentCreate, DepartmentOut
+from services.permissions import member_active_workspace_id
 
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
+
+
+def _dept_ids_movements(db: Session, org_id: int, *, workspace_id, common: bool) -> set[int]:
+    """id подразделений, по которым есть движения (расход/пополнение) в заданном
+    срезе: common=True → общее пространство (workspace_id IS NULL);
+    иначе — конкретное пространство workspace_id."""
+    eq = db.query(Expense.department_id).filter(
+        Expense.org_id == org_id, Expense.department_id.isnot(None)
+    )
+    tq = db.query(BalanceTopUp.department_id).filter(
+        BalanceTopUp.org_id == org_id, BalanceTopUp.department_id.isnot(None)
+    )
+    if common:
+        eq = eq.filter(Expense.workspace_id.is_(None))
+        tq = tq.filter(BalanceTopUp.workspace_id.is_(None))
+    else:
+        eq = eq.filter(Expense.workspace_id == workspace_id)
+        tq = tq.filter(BalanceTopUp.workspace_id == workspace_id)
+    return ({d for (d,) in eq.distinct()} | {d for (d,) in tq.distinct()})
+
+
+def _dept_ids_any(db: Session, org_id: int) -> set[int]:
+    """id подразделений, по которым есть ХОТЬ КАКИЕ-ТО движения (любой срез)."""
+    eq = {d for (d,) in db.query(Expense.department_id).filter(
+        Expense.org_id == org_id, Expense.department_id.isnot(None)).distinct()}
+    tq = {d for (d,) in db.query(BalanceTopUp.department_id).filter(
+        BalanceTopUp.org_id == org_id, BalanceTopUp.department_id.isnot(None)).distinct()}
+    return eq | tq
+
+
+def _scoped_department_ids(db: Session, org_id: int, *, workspace_id, common: bool) -> set[int]:
+    """Подразделения, видимые в срезе: с движениями в этом срезе + совсем новые
+    (без движений нигде — чтобы их можно было использовать/заводить).
+    Подразделения с движениями ТОЛЬКО в чужом срезе скрываются."""
+    in_scope = _dept_ids_movements(db, org_id, workspace_id=workspace_id, common=common)
+    all_dep = {d.id for d in db.query(Department.id).filter(Department.org_id == org_id)}
+    neutral = all_dep - _dept_ids_any(db, org_id)  # нигде не используются
+    return in_scope | neutral
 
 
 def my_department_ids(db: Session, user: User) -> set[int]:
@@ -70,9 +109,30 @@ def _to_out(d: Department, emp_counts: dict, cat_counts: dict) -> DepartmentOut:
 
 
 @router.get("", response_model=List[DepartmentOut])
-def list_departments(db: Session = Depends(get_db), me: User = Depends(get_current_user)):
+def list_departments(
+    all: bool = False,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """all=true — вернуть ВСЕ подразделения org (для выпадающего списка при создании
+    операции/заявки): подотчётному нужно выбрать любое подразделение, даже если он к
+    нему не привязан. По умолчанию accountable видит только свои подразделения."""
     q = db.query(Department).filter(Department.org_id == me.org_id)
-    if not is_director_or_auditor(me):
+    member_ws = member_active_workspace_id(db, me.id, me.org_id)
+    if member_ws is not None:
+        # Участник пространства (владелец ИЛИ подотчётный): подразделения, где есть
+        # движения его пространства (+ совсем новые/пустые). Чужие — скрыты.
+        ids = _scoped_department_ids(db, me.org_id, workspace_id=member_ws, common=False)
+        q = q.filter(Department.id.in_(ids or {-1}))
+    elif can_manage_workspaces(me):
+        pass  # superadmin / gen_director — видят все подразделения (оверсайт)
+    elif is_director_or_auditor(me):
+        # Общий admin/auditor: только подразделения общего пространства (с движениями
+        # вне пространств) + новые. Подразделения, используемые только в пространствах
+        # (напр. «Объект Байгелди»), скрыты.
+        ids = _scoped_department_ids(db, me.org_id, workspace_id=None, common=True)
+        q = q.filter(Department.id.in_(ids or {-1}))
+    elif not all:
         # accountable видит только свои подразделения
         ids = my_department_ids(db, me)
         if not ids:

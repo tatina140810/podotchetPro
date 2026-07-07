@@ -3,13 +3,25 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
-from auth import create_access_token, hash_password, verify_password, get_current_user
+from auth import create_access_token, hash_password, verify_password, get_current_user, require_director_level
 from database import get_db
 from models import ChatMember, ChatRoom, Organization, User, Category
 from schemas import LoginRequest, OrgRegister, TokenResponse, UserOut, OrgOut
+from services.permissions import owned_active_workspace
 
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
+
+
+def _user_out_with_workspace(db: Session, user: User) -> UserOut:
+    """UserOut + поля проектного пространства (для режима изоляции владельца)."""
+    out = UserOut.model_validate(user)
+    ws = owned_active_workspace(db, user.id, user.org_id)
+    if ws:
+        out.workspace_owner = True
+        out.workspace_id = ws.id
+        out.workspace_name = ws.name
+    return out
 
 
 DEFAULT_CATEGORIES = [
@@ -89,22 +101,23 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     token = create_access_token(user.id, user.org_id, user.role)
     return TokenResponse(
         access_token=token,
-        user=UserOut.model_validate(user),
+        user=_user_out_with_workspace(db, user),
         org=OrgOut.model_validate(org),
     )
 
 
 @router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)):
-    return UserOut.model_validate(user)
+def me(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return _user_out_with_workspace(db, user)
 
 
 @router.delete("/account", status_code=status.HTTP_204_NO_CONTENT)
-def delete_account(user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    """Удаление аккаунта (App Store Guideline 5.1.1(v) / право на удаление данных).
+def delete_account(user: User = Depends(require_director_level), db: Session = Depends(get_db)):
+    """Удаление организации (App Store Guideline 5.1.1(v) / право на удаление данных).
 
-    Удаляет организацию пользователя СО ВСЕМИ данными (каскад по org_id): сотрудники,
-    расходы, приходы, выдачи, заявки, категории, подразделения и т.д. Действие
+    ТОЛЬКО владелец-уровень (admin/gen_director/superadmin): удаляет организацию СО
+    ВСЕМИ данными (каскад по org_id). Рядовой сотрудник (accountable/auditor) сделать
+    это НЕ может — иначе любой работник стёр бы данные всей компании. Действие
     необратимо. Все FK с org_id — ondelete=CASCADE, поэтому удаление чистое."""
     org = db.get(Organization, user.org_id)
     if org:

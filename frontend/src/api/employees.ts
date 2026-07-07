@@ -14,6 +14,7 @@ export interface ExpenseRow {
   id: number; date: string; category: string | null; category_id: number | null;
   department_id: number | null;
   amount: number; currency: string; amount_kgs: number; comment: string | null;
+  status: "approved" | "pending" | "rejected";
 }
 export interface RequestOwnRow {
   id: number; date: string; category: string | null; amount: number;
@@ -69,6 +70,9 @@ export const profileApi = {
   updateTopup: (id: number, body: any) => api(`/api/users/topups/${id}`, J(body)),
   updateIncome: (id: number, body: any) => api(`/api/incomes/${id}`, J(body)),
   updateExpense: (id: number, body: any) => api(`/api/expenses/${id}`, J(body)),
+  // Одобрить/отклонить расход на проверке (директор/админ).
+  reviewExpense: (id: number, status: "approved" | "rejected", review_comment?: string | null) =>
+    api(`/api/expenses/${id}/review`, { method: "POST", body: { status, review_comment: review_comment ?? null } }),
   updateRequestComment: (id: number, comment: string) =>
     api(`/api/requests/${id}`, J({ comment })),
   // DELETE

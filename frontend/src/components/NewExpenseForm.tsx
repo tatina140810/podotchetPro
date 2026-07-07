@@ -11,15 +11,15 @@ import { useEffect, useMemo, useState } from "react";
 import { api, uploadReceipt } from "../api/client";
 import { useToast } from "../components/Toast";
 import {
-  isDirectorOrAuditor,
   useAuth,
   type UserOut,
 } from "../context/AuthContext";
 import { listColleagues } from "../api/users";
 import { listDepartments, type Department } from "../api/departments";
 import { createTransfer } from "../api/transfers";
+import { createIncome } from "../api/income";
 
-type Kind = "expense" | "transfer";
+type Kind = "expense" | "income" | "transfer";
 
 interface Props {
   onSaved?: () => void;
@@ -41,13 +41,14 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
   const [form, setForm] = useState({
     category_id: "" as any,
     department_id: "" as any,
-    to_user_id: "" as number | "",
     transfer_to_user_id: "" as number | "",
+    source: "",
     amount: "" as any,
     currency: "KGS",
     description: "",
     receipt_url: "" as string | null,
     spent_at: new Date().toISOString().slice(0, 10),
+    is_personal_contribution: false,
   });
   const [busy, setBusy] = useState(false);
   const [uploading, setUploading] = useState(false);
@@ -57,14 +58,19 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     api(`/api/specs/${me.id}`).then(setSpec).catch(() => {});
     api("/api/categories").then(setCats).catch(() => {});
     listColleagues().then(setColleagues).catch(() => {});
-    listDepartments().then(setDepartments).catch(() => {});
+    // Подотчётный выбирает только СВОИ подразделения (директор/админ видят все —
+    // это уже разруливает бэкенд по роли). Назначить подразделение сотруднику
+    // можно в его профиле («Сотрудники» → «Изменить»).
+    listDepartments(true).then((ds) => {
+      setDepartments(ds);
+      // Если подразделение одно — подставляем автоматически (типичный случай).
+      if (ds.length === 1) setForm((s) => ({ ...s, department_id: String(ds[0].id) }));
+    }).catch(() => {});
   }, [me?.id]);
 
-  const recipients = useMemo(() => {
-    if (!me) return [];
-    if (isDirectorOrAuditor(me.role)) return colleagues;
-    return colleagues.filter((c) => c.supervisor_id === me.id);
-  }, [colleagues, me]);
+  // Передать можно любому коллеге в организации (деньги уходят только с баланса
+  // отправителя — бэкенд это разрешает всем ролям, включая подотчётного).
+  const recipients = colleagues;
 
   const allowedIds: number[] | null = spec?.allowed_categories || null;
   const visibleCats = useMemo(() => {
@@ -82,13 +88,14 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     setForm({
       category_id: "",
       department_id: "",
-      to_user_id: "",
       transfer_to_user_id: "",
+      source: "",
       amount: "",
       currency: "KGS",
       description: "",
       receipt_url: "",
       spent_at: new Date().toISOString().slice(0, 10),
+      is_personal_contribution: false,
     });
     // onBehalfOf не сбрасываем — admin часто вносит подряд несколько записей за одного
   }
@@ -116,10 +123,6 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       toast.show("error", "Прикрепите фото чека");
       return false;
     }
-    if (form.to_user_id && form.currency !== "KGS") {
-      toast.show("error", "Передавать получателю можно только сомы (KGS)");
-      return false;
-    }
     if (!form.department_id) {
       toast.show("error", "Выберите подразделение");
       return false;
@@ -134,12 +137,12 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         description: form.description || null,
         receipt_url: form.receipt_url || null,
         spent_at: form.spent_at ? new Date(form.spent_at).toISOString() : null,
-        to_user_id: form.to_user_id ? Number(form.to_user_id) : null,
         on_behalf_of_user_id: isAdmin && onBehalfOf ? Number(onBehalfOf) : null,
+        is_personal_contribution: form.is_personal_contribution,
       },
     });
     const msgPart = onBehalfName ? ` (от лица ${onBehalfName})` : "";
-    toast.show("success", (form.to_user_id ? "Расход + передача" : "Расход добавлен") + msgPart);
+    toast.show("success", "Расход добавлен" + msgPart);
     return true;
   }
 
@@ -157,6 +160,26 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     return true;
   }
 
+  async function submitIncome() {
+    if (!form.source.trim()) {
+      toast.show("error", "Укажите источник прихода");
+      return false;
+    }
+    // Подотчётный пишет приход на себя; admin в режиме «от лица» — на выбранного.
+    const receiverId = isAdmin && onBehalfOf ? Number(onBehalfOf) : me!.id;
+    await createIncome({
+      amount: Number(form.amount),
+      currency: form.currency as "KGS" | "USD" | "EUR" | "RUB",
+      source: form.source.trim(),
+      description: form.description.trim() || null,
+      received_by_id: receiverId,
+      date: form.spent_at ? new Date(form.spent_at).toISOString() : undefined,
+    });
+    const msgPart = onBehalfName ? ` (от лица ${onBehalfName})` : "";
+    toast.show("success", "Приход записан" + msgPart);
+    return true;
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     if (!Number(form.amount) || Number(form.amount) <= 0) {
@@ -165,7 +188,10 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     }
     setBusy(true);
     try {
-      const ok = kind === "transfer" ? await submitTransfer() : await submitExpense();
+      const ok =
+        kind === "transfer" ? await submitTransfer() :
+        kind === "income" ? await submitIncome() :
+        await submitExpense();
       if (ok) {
         resetForm();
         onSaved?.();
@@ -223,11 +249,19 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         </button>
         <button
           type="button"
+          className={kind === "income" ? "" : "ghost"}
+          onClick={() => setKind("income")}
+          style={{ flex: 1, borderRadius: 0, fontSize: compact ? 13 : 15 }}
+        >
+          Приход
+        </button>
+        <button
+          type="button"
           className={kind === "transfer" ? "" : "ghost"}
           onClick={() => setKind("transfer")}
           style={{ flex: 1, borderRadius: "0 10px 10px 0", fontSize: compact ? 13 : 15 }}
           disabled={recipients.length === 0}
-          title={recipients.length === 0 ? "У вас нет подотчётных для передачи" : ""}
+          title={recipients.length === 0 ? "Нет сотрудников для передачи" : ""}
         >
           Передать
         </button>
@@ -263,16 +297,25 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
               ))}
             </select>
           </div>
+        ) : kind === "income" ? (
+          <div>
+            <label>Источник прихода</label>
+            <input
+              value={form.source}
+              onChange={(e) => setForm({ ...form, source: e.target.value })}
+              placeholder="напр. «Возврат», «Поступление от клиента»"
+              required
+            />
+          </div>
         ) : (
           <div>
             <label>
               Категория{allowedIds ? " (только разрешённые)" : ""}
-              {form.to_user_id ? " (необязательно при передаче)" : ""}
             </label>
             <select
               value={form.category_id}
               onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-              required={!form.to_user_id}
+              required
             >
               <option value="">— выберите —</option>
               {visibleCats.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
@@ -286,62 +329,55 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             <input type="number" min="0.01" step="0.01" value={form.amount}
                    onChange={(e) => setForm({ ...form, amount: e.target.value })} required />
           </div>
-          {kind === "expense" && (
+          {kind !== "transfer" && (
             <div style={{ flex: 1, minWidth: 110 }}>
               <label>Валюта</label>
               <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value })}>
                 <option value="KGS">KGS — сом</option>
                 <option value="USD">USD — $</option>
+                <option value="EUR">EUR — €</option>
                 <option value="RUB">RUB — ₽</option>
               </select>
             </div>
           )}
         </div>
 
-        {kind === "expense" && colleagues.length > 0 && (
-          <div>
-            <label>Получатель (если деньги переданы сотруднику)</label>
-            <select
-              value={form.to_user_id}
-              onChange={(e) => setForm({ ...form, to_user_id: e.target.value ? Number(e.target.value) : "" })}
-            >
-              <option value="">— нет, обычный расход —</option>
-              {colleagues.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
-            </select>
-            {form.to_user_id && form.currency !== "KGS" && (
-              <div className="muted" style={{ fontSize: 12, color: "var(--warning)", marginTop: 4 }}>
-                Передача получателю возможна только в KGS.
-              </div>
-            )}
-            {form.to_user_id && (
-              <div className="muted" style={{ fontSize: 11, marginTop: 4, color: "var(--accent-light)" }}>
-                Это будет передача: с вашего баланса спишется, получатель получит на свой.
-                В расход компании по категориям эта запись НЕ попадёт.
-              </div>
-            )}
-          </div>
-        )}
-
         <div>
-          <label>{kind === "transfer" ? "Заметка (необязательно)" : "Описание"}</label>
+          <label>{kind === "transfer" ? "Заметка (необязательно)" : kind === "income" ? "Комментарий (необязательно)" : "Описание"}</label>
           <textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
         </div>
 
+        {kind !== "transfer" && (
+          <div>
+            <label>{kind === "income" ? "Дата прихода" : "Дата расхода"}</label>
+            <input type="date" value={form.spent_at} onChange={(e) => setForm({ ...form, spent_at: e.target.value })} />
+          </div>
+        )}
         {kind === "expense" && (
-          <>
-            <div>
-              <label>Дата расхода</label>
-              <input type="date" value={form.spent_at} onChange={(e) => setForm({ ...form, spent_at: e.target.value })} />
+          <div>
+            <label>Фото чека{requiresReceipt && " (обязательно)"}</label>
+            <input type="file" accept="image/*,application/pdf" capture="environment" onChange={onFile} />
+            {uploading && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>загружаю...</div>}
+            {form.receipt_url && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>✓ {form.receipt_url}</div>}
+          </div>
+        )}
+        {kind === "expense" && (
+          <div>
+            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 400 }}>
+              <input
+                type="checkbox"
+                checked={form.is_personal_contribution}
+                onChange={(e) => setForm({ ...form, is_personal_contribution: e.target.checked })}
+                style={{ width: "auto", margin: 0 }}
+              />
+              Расход из личных средств в счёт подразделения
+            </label>
+            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+              Отметьте, если сотрудник оплатил из личных средств без подотчёта. Сумма
+              учтётся как вклад в бюджет подразделения (и приход, и расход) — личный
+              баланс и приходы сотрудника не меняются.
             </div>
-            <div>
-              <label>Фото чека{requiresReceipt && " (обязательно)"}</label>
-              <input type="file" accept="image/*,application/pdf" capture="environment" onChange={onFile} />
-              {uploading && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>загружаю...</div>}
-              {form.receipt_url && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>✓ {form.receipt_url}</div>}
-            </div>
-          </>
+          </div>
         )}
 
         <div className="row" style={{ justifyContent: "flex-end" }}>
@@ -351,7 +387,8 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
           <button type="submit" disabled={busy}>
             {busy ? "..." : (
               kind === "transfer" ? "Передать" :
-              form.to_user_id ? "Выдать и записать" : "Записать расход"
+              kind === "income" ? "Записать приход" :
+              "Записать расход"
             )}
           </button>
         </div>

@@ -19,7 +19,11 @@ from services.balance import (
     issued_total,
     month_bounds,
 )
-from services.permissions import visible_user_ids
+from services.permissions import (
+    member_active_workspace_id,
+    owner_isolation_ws_id,
+    visible_user_ids,
+)
 
 
 router = APIRouter(prefix="/api/advances", tags=["advances"])
@@ -43,6 +47,9 @@ def list_advances(
     visible = visible_user_ids(db, me)
     if visible is not None:
         q = q.filter(Advance.employee_id.in_(visible))
+    iso = owner_isolation_ws_id(db, me)
+    if iso is not None:  # владелец пространства видит выдачи только своего пространства
+        q = q.filter(Advance.workspace_id == iso)
     if employee_id:
         q = q.filter(Advance.employee_id == employee_id)
     rows = q.order_by(Advance.issued_at.desc()).limit(limit).all()
@@ -113,6 +120,9 @@ def create_advance(
         source="org_funds",
         purpose=payload.purpose,
         comment=payload.comment,
+        # Если получатель — участник пространства, метим выдачу его пространством
+        # (для агрегата). Сама выдача остаётся видимой всем — это легальный приход.
+        workspace_id=member_active_workspace_id(db, employee.id, admin.org_id),
         issued_at=payload.issued_at or datetime.utcnow(),
     )
     db.add(a)

@@ -11,13 +11,18 @@ import {
 } from "../context/AuthContext";
 import { topupUser } from "../api/transfers";
 import { listDepartments, type Department } from "../api/departments";
+import { EditUserModal } from "../components/EditUserModal";
 
 interface UserWithBalance {
   id: number;
   name: string;
   phone: string;
+  email: string | null;
   role: Role;
   supervisor_id: number | null;
+  is_active: boolean;
+  is_confidential: boolean;
+  department_ids: number[];
   current_balance: string | number;
   total_issued: string | number;
   balance: string | number;
@@ -46,6 +51,7 @@ export default function Employees() {
   const [list, setList] = useState<UserWithBalance[] | null>(null);
   const [showAdd, setShowAdd] = useState(false);
   const [topupTarget, setTopupTarget] = useState<UserWithBalance | null>(null);
+  const [editTarget, setEditTarget] = useState<UserWithBalance | null>(null);
   const toast = useToast();
 
   const reload = () => api<UserWithBalance[]>("/api/users").then(setList);
@@ -58,6 +64,8 @@ export default function Employees() {
 
   // Кто может видеть «Выдано» и кнопку «Выдать»: admin + gen_director (те, кто может делать topup).
   const canIssue = isDirectorLevel(user?.role);
+  // Редактировать профиль (роль, подразделения) может admin/superadmin (PATCH /api/users → require_admin).
+  const canEdit = user?.role === "admin" || user?.role === "superadmin";
   const colCount = canIssue ? 7 : 6;
 
   return (
@@ -85,7 +93,9 @@ export default function Employees() {
               const cur = Number(u.current_balance);
               const issued = Number(u.total_issued);
               const sup = u.supervisor_id ? byId.get(u.supervisor_id) : null;
-              const isAccountable = u.role === "accountable";
+              // В пространстве баланс держат все участники (в т.ч. владелец-admin),
+              // поэтому у владельца пространства показываем баланс по всем строкам.
+              const isAccountable = u.role === "accountable" || !!user?.workspace_owner;
               return (
                 <tr key={u.id}>
                   <td>
@@ -121,6 +131,11 @@ export default function Employees() {
                       <Link to={`/reports/employees/${u.id}`} title="Профиль / отчёт сотрудника">
                         <button className="ghost" style={{ padding: "6px 10px" }}>Профиль</button>
                       </Link>
+                      {canEdit && (
+                        <button className="ghost" style={{ padding: "6px 10px" }}
+                                title="Изменить роль, подразделения и данные"
+                                onClick={() => setEditTarget(u)}>Изменить</button>
+                      )}
                       {canIssue && <button onClick={() => setTopupTarget(u)}>Выдать</button>}
                     </div>
                   </td>
@@ -155,6 +170,18 @@ export default function Employees() {
           }}
         />
       )}
+
+      {editTarget && (
+        <EditUserModal
+          user={editTarget}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            reload();
+            toast.show("success", "Сохранено");
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -171,7 +198,7 @@ function TopUpModal({
   onSaved: (amount: number) => void;
 }) {
   const [amount, setAmount] = useState("");
-  const [currency, setCurrency] = useState<"KGS" | "USD" | "RUB">("KGS");
+  const [currency, setCurrency] = useState<"KGS" | "USD" | "EUR" | "RUB">("KGS");
   const [note, setNote] = useState("");
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10));
   const [categoryId, setCategoryId] = useState<string>("");
@@ -244,9 +271,10 @@ function TopUpModal({
             </div>
             <div style={{ flex: 1, minWidth: 100 }}>
               <label>Валюта</label>
-              <select value={currency} onChange={(e) => setCurrency(e.target.value as "KGS" | "USD" | "RUB")}>
+              <select value={currency} onChange={(e) => setCurrency(e.target.value as "KGS" | "USD" | "EUR" | "RUB")}>
                 <option value="KGS">KGS</option>
                 <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
                 <option value="RUB">RUB</option>
               </select>
             </div>

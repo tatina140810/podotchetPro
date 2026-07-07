@@ -97,10 +97,48 @@ class UserOut(BaseModel):
     role: str
     is_active: bool
     is_confidential: bool = False
+    is_platform_owner: bool = False
     supervisor_id: Optional[int] = None
     created_at: datetime
     # Подразделения сотрудника (id) — заполняется в роутере из M2M.
     department_ids: List[int] = Field(default_factory=list)
+    # Владелец проектного пространства — для режима изоляции интерфейса.
+    # Заполняется в /api/auth/me и login (по активному пространству пользователя).
+    workspace_owner: bool = False
+    workspace_id: Optional[int] = None
+    workspace_name: Optional[str] = None
+
+
+# ===================== SUPER (платформенная админка) =====================
+class SuperOrgItem(BaseModel):
+    id: int
+    name: str
+    plan: str
+    is_active: bool
+    employees_count: int
+    admin_name: Optional[str] = None
+    admin_phone: Optional[str] = None
+    plan_expires_at: Optional[datetime] = None
+
+
+class SuperOrgCreate(BaseModel):
+    org_name: str = Field(..., min_length=2, max_length=200)
+    admin_name: Optional[str] = Field(default=None, max_length=200)
+    admin_phone: str = Field(..., min_length=5, max_length=20)
+    admin_password: Optional[str] = Field(default=None, min_length=6)  # None → сгенерим 6 цифр
+    plan: Optional[str] = "free"
+
+
+class SuperOrgCreateOut(BaseModel):
+    org_id: int
+    org_name: str
+    admin_phone: str
+    admin_password: str  # plaintext — показывается ОДИН раз при создании
+    plan: str
+
+
+class PlanUpdate(BaseModel):
+    plan: str
 
 
 class UserWithBalance(UserOut):
@@ -191,6 +229,7 @@ class CategoryOut(CategoryBase):
 
     id: int
     org_id: int
+    workspace_id: Optional[int] = None  # NOT NULL = приватная категория пространства
     parent_name: Optional[str] = None
     # Для селектов: «Транспорт / Такси» для подкатегорий, просто «Транспорт» для корневых.
     display_name: Optional[str] = None
@@ -323,6 +362,9 @@ class ExpenseCreate(BaseModel):
     # Режим администратора: admin вносит расход от лица другого пользователя.
     # employee_id = on_behalf_of_user_id; recorded_by_id = admin. Только при role==admin.
     on_behalf_of_user_id: Optional[int] = None
+    # «Расход из личных средств в счёт подразделения»: оплата из личных средств без
+    # подотчёта. НЕ создаёт приход — учитывается в агрегате подразделения как приход+расход.
+    is_personal_contribution: bool = False
 
 
 class ExpenseUpdate(BaseModel):
@@ -338,6 +380,10 @@ class ExpenseUpdate(BaseModel):
 class ExpenseReview(BaseModel):
     status: str = Field(..., pattern="^(approved|rejected)$")
     review_comment: Optional[str] = None
+
+
+class ExpensePersonalContributionToggle(BaseModel):
+    enabled: bool
 
 
 class ExpenseReceiptCreate(BaseModel):
@@ -383,6 +429,8 @@ class ExpenseOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     department_id: Optional[int] = None
+    workspace_id: Optional[int] = None  # NOT NULL = расход внутри проектного пространства
+    is_personal_contribution: bool = False  # расход из личных средств в счёт подразделения
     employee_name: Optional[str] = None
     category_name: Optional[str] = None
     department_name: Optional[str] = None
@@ -753,6 +801,8 @@ class BulkImportItem(BaseModel):
     description: Optional[str] = None
     note: Optional[str] = None                # для topup
     date: Optional[datetime] = None
+    # «Расход из личных средств в счёт подразделения» (только для expense).
+    is_personal_contribution: bool = False
 
 
 class BulkImportPayload(BaseModel):
@@ -856,7 +906,7 @@ class BalanceTopUpUpdate(BaseModel):
 
 # ===================== RECURRING OBLIGATIONS (регулярные обязательства) =====================
 
-_PERIODICITY = "^(monthly|weekly|one_time)$"
+_PERIODICITY = "^(monthly|weekly|yearly|one_time)$"
 
 
 class RecurringObligationCreate(BaseModel):
@@ -864,6 +914,7 @@ class RecurringObligationCreate(BaseModel):
     amount: Decimal = Field(..., gt=0)
     periodicity: str = Field(default="monthly", pattern=_PERIODICITY)
     comment: Optional[str] = Field(default=None, max_length=1000)
+    category_id: Optional[int] = None
 
 
 class RecurringObligationUpdate(BaseModel):
@@ -871,6 +922,7 @@ class RecurringObligationUpdate(BaseModel):
     amount: Optional[Decimal] = Field(default=None, gt=0)
     periodicity: Optional[str] = Field(default=None, pattern=_PERIODICITY)
     comment: Optional[str] = Field(default=None, max_length=1000)
+    category_id: Optional[int] = None
 
 
 class RecurringObligationOut(BaseModel):
@@ -882,6 +934,8 @@ class RecurringObligationOut(BaseModel):
     amount: Decimal
     periodicity: str
     comment: Optional[str] = None
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
     sort_order: int
     created_at: datetime
 
@@ -898,7 +952,7 @@ _EXP_PERIODICITY = "^(one_time|monthly|weekly)$"
 class ExpectedIncomeCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
     amount: Decimal = Field(..., gt=0)
-    currency: str = Field(default="KGS", pattern="^(KGS|USD)$")
+    currency: str = Field(default="KGS", pattern="^(KGS|USD|EUR)$")
     expected_date: Optional[datetime] = None
     periodicity: str = Field(default="one_time", pattern=_EXP_PERIODICITY)
     comment: Optional[str] = Field(default=None, max_length=1000)
@@ -907,7 +961,7 @@ class ExpectedIncomeCreate(BaseModel):
 class ExpectedIncomeUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=200)
     amount: Optional[Decimal] = Field(default=None, gt=0)
-    currency: Optional[str] = Field(default=None, pattern="^(KGS|USD)$")
+    currency: Optional[str] = Field(default=None, pattern="^(KGS|USD|EUR)$")
     expected_date: Optional[datetime] = None
     periodicity: Optional[str] = Field(default=None, pattern=_EXP_PERIODICITY)
     comment: Optional[str] = Field(default=None, max_length=1000)
@@ -929,6 +983,93 @@ class ExpectedIncomeOut(BaseModel):
     received_at: Optional[datetime] = None
     created_income_id: Optional[int] = None
     created_at: datetime
+
+
+# ===================== PROJECT WORKSPACES (проектные пространства) =====================
+
+class WorkspaceUserShort(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    role: Optional[str] = None
+
+
+class WorkspaceCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255)
+    description: Optional[str] = None
+    owner_id: int
+
+
+class WorkspaceUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    description: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class WorkspaceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    org_id: int
+    name: str
+    description: Optional[str] = None
+    owner: WorkspaceUserShort
+    is_active: bool
+    created_at: datetime
+    members_count: int = 0
+    # Финансовый агрегат по владельцу пространства (KGS).
+    total_received: Decimal = Decimal(0)
+    total_spent: Decimal = Decimal(0)
+    balance: Decimal = Decimal(0)
+
+
+class WorkspaceSummary(BaseModel):
+    """Агрегат для admin/auditor — только финансовый итог по владельцу, без детализации."""
+    owner: WorkspaceUserShort
+    total_received: Decimal = Decimal(0)
+    total_spent: Decimal = Decimal(0)
+    balance: Decimal = Decimal(0)
+
+
+class WorkspaceMemberCreate(BaseModel):
+    user_id: int
+
+
+class WorkspaceMemberOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    workspace_id: int
+    user_id: int
+    user: WorkspaceUserShort
+    added_at: datetime
+
+
+class WorkspaceMemberBalance(BaseModel):
+    user_id: int
+    name: str
+    received_external: Decimal = Decimal(0)   # пришло извне пространства (компания → участник)
+    received_internal: Decimal = Decimal(0)   # пришло от других участников (Мээрим → Дилан)
+    spent: Decimal = Decimal(0)               # утверждённые расходы
+    transferred_out: Decimal = Decimal(0)     # выдал другим участникам
+    balance: Decimal = Decimal(0)
+
+
+class WorkspaceCategoryReportRow(BaseModel):
+    category_id: Optional[int] = None
+    category: str
+    amount: Decimal = Decimal(0)
+    count: int = 0
+    percent: float = 0.0
+
+
+class WorkspaceCategoryCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    icon: Optional[str] = None
+    color: Optional[str] = None
+    is_operational: bool = False
+    parent_id: Optional[int] = None
 
 
 # Forward refs

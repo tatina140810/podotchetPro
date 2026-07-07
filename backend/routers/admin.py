@@ -18,7 +18,13 @@ from schemas import (
     BulkImportResult,
 )
 from services.exchange import get_current_rate
-from services.permissions import hidden_user_ids
+from services.permissions import (
+    hidden_user_ids,
+    member_active_workspace_id,
+    owner_isolation_ws_id,
+    workspace_details_hidden,
+    workspace_member_ids,
+)
 
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -37,7 +43,7 @@ def _resolve_amount_kgs(
 
 
 def _resolve_department(db: Session, admin: User, item: BulkImportItem) -> int:
-    """Подразделение обязательно для expense/topup в импорте. Возвращает его id."""
+    """Подразделение обязательно для expense в импорте. Возвращает его id."""
     if item.department_id is None:
         raise ValueError("department_id обязателен")
     dep = db.get(Department, item.department_id)
@@ -52,6 +58,9 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
     employee = db.get(User, item.user_id)
     if not employee or employee.org_id != admin.org_id:
         raise ValueError(f"Пользователь user_id={item.user_id} не найден")
+    iso = owner_isolation_ws_id(db, admin)
+    if iso is not None and employee.id not in workspace_member_ids(db, iso):
+        raise ValueError("В пространстве можно вносить только по участникам пространства")
     if item.category_id is not None:
         cat = db.get(Category, item.category_id)
         if not cat or cat.org_id != admin.org_id:
@@ -72,6 +81,9 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         status="approved",         # admin вносит сразу как утверждённый
         reviewed_by_id=admin.id,
         recorded_by_id=admin.id,   # пометка «внесено admin»
+        # Помечаем по УЧАСТНИКУ-сотруднику (его пространство), а не по импортёру.
+        workspace_id=member_active_workspace_id(db, employee.id, admin.org_id),
+        is_personal_contribution=bool(item.is_personal_contribution),
         spent_at=item.date or datetime.utcnow(),
     )
     db.add(e)
@@ -95,6 +107,9 @@ def _create_income(db: Session, admin: User, item: BulkImportItem) -> None:
     receiver = db.get(User, receiver_id)
     if not receiver or receiver.org_id != admin.org_id:
         raise ValueError(f"Получатель id={receiver_id} не найден")
+    iso = owner_isolation_ws_id(db, admin)
+    if iso is not None and receiver.id not in workspace_member_ids(db, iso):
+        raise ValueError("В пространстве можно вносить только по участникам пространства")
     amount_kgs = _resolve_amount_kgs(db, admin.org_id, item.amount, item.currency)
     if amount_kgs is None:
         raise ValueError(f"Курс {item.currency}/KGS не установлен")
@@ -119,6 +134,9 @@ def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
     target = db.get(User, item.user_id)
     if not target or target.org_id != admin.org_id:
         raise ValueError(f"Пользователь user_id={item.user_id} не найден")
+    iso = owner_isolation_ws_id(db, admin)
+    if iso is not None and target.id not in workspace_member_ids(db, iso):
+        raise ValueError("В пространстве можно вносить только по участникам пространства")
     # KGS-эквивалент для multi-currency TopUp
     amount_kgs = _resolve_amount_kgs(db, admin.org_id, item.amount, item.currency)
     if amount_kgs is None:
@@ -136,7 +154,13 @@ def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
         cat = db.get(Category, item.category_id)
         if not cat or cat.org_id != admin.org_id:
             raise ValueError(f"Категория id={item.category_id} не найдена")
-    department_id = _resolve_department(db, admin, item)
+    # Подразделение для выдачи опционально (как в обычной модалке «Выдать»).
+    department_id = None
+    if item.department_id is not None:
+        dep = db.get(Department, item.department_id)
+        if not dep or dep.org_id != admin.org_id:
+            raise ValueError(f"Подразделение id={item.department_id} не найдено")
+        department_id = dep.id
     t = BalanceTopUp(
         org_id=admin.org_id,
         admin_id=issued_by_id,
@@ -148,12 +172,18 @@ def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
         date=item.date or datetime.utcnow(),
         category_id=item.category_id,
         department_id=department_id,
+        workspace_id=iso,          # владелец импортирует в своё пространство
     )
     db.add(t)
     db.flush()
     # Если категория не «Подотчёт» — авто-Expense получателю (как в /topup endpoint).
-    from routers.transfers import _auto_expense_for_topup
-    _auto_expense_for_topup(db, t)
+    from routers.transfers import _sync_topup_expense
+    _sync_topup_expense(db, t)
+    # Авто-расход от выдачи тоже метим пространством (иначе утечёт в общий учёт).
+    if iso is not None:
+        auto = db.query(Expense).filter(Expense.source_topup_id == t.id).first()
+        if auto is not None:
+            auto.workspace_id = iso
 
 
 _HANDLERS = {
@@ -292,6 +322,7 @@ def recent_operations(
     amount_max: Optional[float] = None,
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
+    kind: Optional[str] = None,
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -299,6 +330,7 @@ def recent_operations(
     employee_id: для expense=employee_id, income=received_by_id, topup=user_id.
     category_id: применяется только к Expense и TopUp (у Income нет категории —
     при выбранной категории Income исключаются).
+    kind: фильтр по типу операции (expense | income | topup | request); None = все типы.
     Возвращает {items, total, has_more}."""
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
@@ -311,9 +343,17 @@ def recent_operations(
     tq = db.query(BalanceTopUp).filter(BalanceTopUp.org_id == admin.org_id)
     rq = db.query(MoneyRequest).filter(MoneyRequest.org_id == admin.org_id)
     # Флаг: показывать ли Income/Requests (исключаем когда фильтр по категории — у них её нет;
-    # Income исключаем и при фильтре по подразделению — у прихода нет подразделения)
-    include_income = category_id is None and department_id is None
-    include_requests = category_id is None
+    # Income исключаем и при фильтре по подразделению — у прихода нет подразделения).
+    # kind (если задан) дополнительно сужает до одного типа операции.
+    # «Приход» (kind="income") трактуем как ВСЁ полученное сотрудником: внешний приход
+    # (Income) + выдача на баланс (BalanceTopUp) — это совпадает с разделом «Приходы»
+    # в отчёте по сотруднику. «Выдача» (kind="topup") — только выдачи.
+    show_expense = kind is None or kind == "expense"
+    show_topup = kind is None or kind == "topup" or kind == "income"
+    # Income теперь может иметь подразделение (технические авто-приходы), поэтому
+    # при фильтре по подразделению приходы НЕ исключаем — фильтруем их по department_id ниже.
+    include_income = category_id is None and (kind is None or kind == "income")
+    include_requests = category_id is None and (kind is None or kind == "request")
 
     if employee_id is not None:
         eq = eq.filter(Expense.employee_id == employee_id)
@@ -332,6 +372,7 @@ def recent_operations(
     if department_id is not None:
         eq = eq.filter(Expense.department_id == department_id)
         tq = tq.filter(BalanceTopUp.department_id == department_id)
+        iq = iq.filter(Income.department_id == department_id)
         rq = rq.filter(MoneyRequest.department_id == department_id)
     # Фича 2: операции конфиденциальных сотрудников скрыты (для admin/auditor; superadmin видит всё).
     hidden = hidden_user_ids(db, admin)
@@ -340,6 +381,19 @@ def recent_operations(
         iq = iq.filter(Income.received_by_id.notin_(hidden))
         tq = tq.filter(BalanceTopUp.admin_id.notin_(hidden), BalanceTopUp.user_id.notin_(hidden))
         rq = rq.filter(MoneyRequest.requester_id.notin_(hidden), MoneyRequest.approver_id.notin_(hidden))
+    # Изоляция владельца пространства: только операции его пространства.
+    iso = owner_isolation_ws_id(db, admin)
+    if iso is not None:
+        # Владелец: только операции его пространства.
+        members = workspace_member_ids(db, iso)
+        eq = eq.filter(Expense.workspace_id == iso)
+        iq = iq.filter(Income.received_by_id.in_(members))
+        tq = tq.filter(BalanceTopUp.workspace_id == iso)
+        rq = rq.filter(MoneyRequest.requester_id.in_(members), MoneyRequest.approver_id.in_(members))
+    elif workspace_details_hidden(db, admin):
+        # Общий admin/auditor: историю пространств не показываем (детализация скрыта).
+        eq = eq.filter(Expense.workspace_id.is_(None))
+        tq = tq.filter(BalanceTopUp.workspace_id.is_(None))
     if amount_min is not None:
         eq = eq.filter(Expense.amount >= amount_min)
         iq = iq.filter(Income.amount >= amount_min)
@@ -362,14 +416,15 @@ def recent_operations(
         tq = tq.filter(BalanceTopUp.date < date_to_exclusive)
         rq = rq.filter(rq_date < date_to_exclusive)
 
-    total = eq.count() + (iq.count() if include_income else 0) + tq.count() + (rq.count() if include_requests else 0)
+    total = (eq.count() if show_expense else 0) + (iq.count() if include_income else 0) + (tq.count() if show_topup else 0) + (rq.count() if include_requests else 0)
 
     # Берём из каждого типа по (offset + limit) последних — этого хватит чтобы
     # после слияния и сортировки корректно вернуть срез [offset : offset+limit].
     take = offset + limit
     rows: list[dict] = []
 
-    for e in eq.order_by(Expense.spent_at.desc()).limit(take).all():
+    expense_rows = eq.order_by(Expense.spent_at.desc()).limit(take).all() if show_expense else []
+    for e in expense_rows:
         rows.append({
             "kind": "expense",
             "id": e.id,
@@ -382,6 +437,8 @@ def recent_operations(
             "description": e.description,
             "category_name": e.category.name if e.category else None,
             "status": e.status,
+            "is_personal_contribution": bool(e.is_personal_contribution),
+            "expense_type": e.expense_type,
         })
 
     if include_income:
@@ -398,7 +455,8 @@ def recent_operations(
                 "source": i.source,
             })
 
-    for t in tq.order_by(BalanceTopUp.date.desc()).limit(take).all():
+    topup_rows = tq.order_by(BalanceTopUp.date.desc()).limit(take).all() if show_topup else []
+    for t in topup_rows:
         rows.append({
             "kind": "topup",
             "id": t.id,

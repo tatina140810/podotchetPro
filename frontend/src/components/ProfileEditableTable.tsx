@@ -18,6 +18,8 @@ interface Props {
   sym: string;
   fmt: (n: number) => string;
   canEdit: boolean;
+  /** Может одобрять/отклонять расходы на проверке (директор/админ). */
+  canReview: boolean;
   editingKey: string | null;
   setEditingKey: (k: string | null) => void;
   colleagues: UserOut[];
@@ -167,6 +169,17 @@ export function ProfileEditableTable(p: Props) {
     }
   }
 
+  async function review(r: any, status: "approved" | "rejected") {
+    if (status === "rejected" && !confirm("Отклонить этот расход?")) return;
+    try {
+      await profileApi.reviewExpense(r.id, status);
+      toast.show("success", status === "approved" ? "Одобрено" : "Отклонено");
+      p.onChanged();
+    } catch (e: any) {
+      toast.show("error", e.message || "Ошибка");
+    }
+  }
+
   // ---- рендер полей формы (общие) ----
   const otherEditing = p.editingKey !== null && p.editingKey !== addKey;
   const deptChoices = p.employeeDeptIds.length
@@ -182,7 +195,7 @@ export function ProfileEditableTable(p: Props) {
     const amountInp = <input type="number" min="0.01" step="0.01" value={form.amount} onChange={(e) => set("amount", e.target.value)} style={{ textAlign: "right", width: 90 }} />;
     const curInp = (
       <select value={form.currency} onChange={(e) => set("currency", e.target.value)} style={{ width: 72, padding: "6px 6px" }}>
-        <option value="KGS">KGS</option><option value="USD">USD</option><option value="RUB">RUB</option>
+        <option value="KGS">KGS</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="RUB">RUB</option>
       </select>
     );
     const moneyCell = (
@@ -262,9 +275,19 @@ export function ProfileEditableTable(p: Props) {
                 p.editingKey === `${p.kind}:${r.id}`
                   ? <Fragment key={r.id}>{formRow(r)}</Fragment>
                   : (
-                    <tr key={r.id} className="prow">
+                    <tr key={r.id} className={`prow${p.kind === "expenses" && r.status === "pending" ? " pending-row" : ""}`}>
                       {displayCells(r).map((c, i) => <td key={i} style={i === (p.kind === "transferred" ? 3 : 2) ? { textAlign: "right", fontWeight: 600 } : undefined}>{c}</td>)}
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {p.kind === "expenses" && r.status === "pending" && (
+                          p.canReview ? (
+                            <span style={{ marginRight: 6, whiteSpace: "nowrap" }}>
+                              <button className="success" disabled={otherEditing} onClick={() => review(r, "approved")} title="Одобрить" style={{ padding: "2px 8px" }}>✓</button>
+                              <button className="danger" disabled={otherEditing} onClick={() => review(r, "rejected")} title="Отклонить" style={{ padding: "2px 8px", marginLeft: 4 }}>✗</button>
+                            </span>
+                          ) : (
+                            <span className="badge pending" style={{ fontSize: 11, marginRight: 6 }}>на проверке</span>
+                          )
+                        )}
                         {p.canEdit && (
                           <span className="prow-actions">
                             <button className="ghost" disabled={otherEditing} onClick={() => startEdit(r)} title="Изменить" style={{ padding: "2px 8px" }}>Изм.</button>

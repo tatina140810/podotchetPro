@@ -46,6 +46,9 @@ export function BurgerMenu() {
   // «Категории» и «Импорт истории» — admin и superadmin.
   // superadmin имеет полный admin-доступ ко всем пунктам.
   const isAdminLike = user.role === "admin" || user.role === "superadmin";
+  // Владелец проектного пространства изолирован: общефирменные справочники
+  // (источники дохода, импорт истории, подразделения) ему не показываем.
+  const isoOwner = !!user.workspace_owner;
   const items = isDirectorOrAuditor(user.role)
     ? [
         { to: "/", label: "Отчёт по категориям" },
@@ -56,7 +59,12 @@ export function BurgerMenu() {
         { to: "/requests", label: "Заявки" },
         { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/expenses", label: "Расходы" },
+        // «Проектные пространства» — только superadmin и gen_director.
+        ...(user.role === "superadmin" || user.role === "gen_director"
+          ? [{ to: "/workspaces", label: "Проектные пространства" }]
+          : []),
         // «Подразделения» — admin/superadmin и auditor (управление иерархией).
+        // У владельца пространства данные уже ограничены его подразделениями (бэкенд).
         ...(isAdminLike || user.role === "auditor"
           ? [{ to: "/admin/departments", label: "Подразделения" }]
           : []),
@@ -64,8 +72,9 @@ export function BurgerMenu() {
         ...(isAdminLike
           ? [
               { to: "/categories", label: "Категории" },
-              // «Источники дохода» — справочник, виден только при включённой фиче.
-              ...(flag("income_sources")
+              // «Источники дохода» и «Импорт истории» — общефирменные, скрыты у
+              // изолированного владельца пространства.
+              ...(flag("income_sources") && !isoOwner
                 ? [{ to: "/admin/income-sources", label: "Источники дохода" }]
                 : []),
               { to: "/admin/bulk-import", label: "Импорт истории" },
@@ -74,6 +83,10 @@ export function BurgerMenu() {
         // «Настройки» — только суперадмин (управление тумблерами фич).
         ...(user.role === "superadmin"
           ? [{ to: "/admin/settings", label: "Настройки" }]
+          : []),
+        // «Платформа» — только владелец платформы (управление всеми организациями).
+        ...(user.is_platform_owner
+          ? [{ to: "/super", label: "Платформа" }]
           : []),
       ]
     : [
@@ -138,8 +151,10 @@ export function BurgerMenu() {
             type="button"
             onClick={() => { setOpen(false); deleteAccount(); }}
             style={{
-              marginTop: 16, background: "none", border: "none", textAlign: "left",
-              color: "var(--danger)", fontSize: 13, cursor: "pointer", padding: "8px 0",
+              marginTop: "auto", background: "none", textAlign: "left",
+              borderTop: "1px solid var(--border)", borderLeft: "none",
+              borderRight: "none", borderBottom: "none",
+              color: "var(--danger)", fontSize: 13, cursor: "pointer", padding: "14px 18px",
             }}
           >
             Удалить аккаунт

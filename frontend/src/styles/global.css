@@ -226,6 +226,8 @@ label { display: block; color: var(--text-muted); font-size: 13px; margin-bottom
 .burger-nav {
   display: flex;
   flex-direction: column;
+  flex: 1 1 auto;
+  overflow-y: auto;
   padding: 8px 0;
 }
 .burger-nav a {

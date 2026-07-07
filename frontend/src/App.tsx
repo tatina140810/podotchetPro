@@ -31,6 +31,7 @@ import CategoryReport from "./pages/CategoryReport";
 import EmployeesReport from "./pages/EmployeesReport";
 import EmployeeProfile from "./pages/EmployeeProfile";
 import ReportsDepartments from "./pages/ReportsDepartments";
+import DepartmentDetail from "./pages/DepartmentDetail";
 import BalanceReport from "./pages/BalanceReport";
 import IncomeReport from "./pages/IncomeReport";
 import IncomeSources from "./pages/IncomeSources";
@@ -41,6 +42,9 @@ import RecurringObligations from "./pages/RecurringObligations";
 import RequestNew from "./pages/RequestNew";
 import RequestDetail from "./pages/RequestDetail";
 import Transfers from "./pages/Transfers";
+import { SuperPanel } from "./pages/SuperPanel";
+import Workspaces from "./pages/Workspaces";
+import WorkspaceDetail from "./pages/WorkspaceDetail";
 
 function ProtectedShell({ children }: { children: React.ReactNode }) {
   const { user, org, logout, loading } = useAuth();
@@ -83,11 +87,7 @@ export default function App() {
       <CurrencyProvider>
         <Routes>
           <Route path="/login" element={<LoginRoute />} />
-          <Route path="*" element={
-            <ProtectedShell>
-              <RoleRoutes />
-            </ProtectedShell>
-          } />
+          <Route path="*" element={<ProtectedArea />} />
         </Routes>
       </CurrencyProvider>
     </ToastProvider>
@@ -98,6 +98,19 @@ function LoginRoute() {
   const { user } = useAuth();
   if (user) return <Navigate to="/" replace />;
   return <Login />;
+}
+
+/** Защищённая зона. Владелец пространства использует ТОТ ЖЕ интерфейс
+ *  администратора — изоляция данных в его пространство делается на бэкенде. */
+function ProtectedArea() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="container"><div className="muted">Загрузка...</div></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return (
+    <ProtectedShell>
+      <RoleRoutes />
+    </ProtectedShell>
+  );
 }
 
 function RoleRoutes() {
@@ -127,8 +140,11 @@ function RoleRoutes() {
         <Route path="/reports/employees" element={<EmployeesReport />} />
         <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
         <Route path="/reports/departments" element={<ReportsDepartments />} />
+        <Route path="/reports/departments/:id" element={<DepartmentDetail />} />
         <Route path="/reports/balance" element={<BalanceReport />} />
         <Route path="/reports/incomes" element={<IncomeReport />} />
+        <Route path="/workspaces" element={<Workspaces />} />
+        <Route path="/workspaces/:id" element={<WorkspaceDetail />} />
         <Route path="/issued-topups" element={<IssuedTopups />} />
         <Route path="/admin/bulk-import" element={<BulkImport />} />
         <Route path="/requests" element={<Requests />} />
@@ -136,6 +152,7 @@ function RoleRoutes() {
         <Route path="/requests/new" element={<RequestNew />} />
         <Route path="/requests/:id" element={<RequestDetail />} />
         <Route path="/transfers" element={<Transfers />} />
+        <Route path="/super" element={<SuperPanel />} />
         <Route path="*" element={<NotFound />} />
       </Routes>
     );

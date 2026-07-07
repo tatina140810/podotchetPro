@@ -18,9 +18,17 @@ from auth import require_admin, require_director_or_auditor
 from database import get_db
 from models import Income, IncomeSource, User
 from schemas import IncomeSourceCreate, IncomeSourceOut, IncomeSourceUpdate
+from services.permissions import owner_isolation_ws_id
 
 
 router = APIRouter(prefix="/api/income-sources", tags=["income-sources"])
+
+
+def _block_isolated_owner(db: Session, me: User) -> None:
+    """Источники дохода — общефирменный справочник, не относится к проектным
+    пространствам. Изолированному владельцу пространства он недоступен."""
+    if owner_isolation_ws_id(db, me) is not None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Недоступно в проектном пространстве")
 
 
 def _counts(db: Session, org_id: int) -> dict[int, int]:
@@ -45,6 +53,8 @@ def list_income_sources(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    if owner_isolation_ws_id(db, me) is not None:
+        return []  # владельцу пространства общефирменный справочник не показываем
     q = db.query(IncomeSource).filter(IncomeSource.org_id == me.org_id)
     if active_only:
         q = q.filter(IncomeSource.is_active.is_(True))
@@ -59,6 +69,7 @@ def create_income_source(
     db: Session = Depends(get_db),
     me: User = Depends(require_admin),
 ):
+    _block_isolated_owner(db, me)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Название не может быть пустым")
@@ -83,6 +94,7 @@ def update_income_source(
     db: Session = Depends(get_db),
     me: User = Depends(require_admin),
 ):
+    _block_isolated_owner(db, me)
     s = db.get(IncomeSource, source_id)
     if not s or s.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Источник не найден")
@@ -119,6 +131,7 @@ def delete_income_source(
     db: Session = Depends(get_db),
     me: User = Depends(require_admin),
 ):
+    _block_isolated_owner(db, me)
     s = db.get(IncomeSource, source_id)
     if not s or s.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Источник не найден")

@@ -1,6 +1,6 @@
 import { api } from "./client";
 
-export type Periodicity = "monthly" | "weekly" | "one_time";
+export type Periodicity = "monthly" | "weekly" | "yearly" | "one_time";
 
 export interface RecurringObligation {
   id: number;
@@ -9,6 +9,8 @@ export interface RecurringObligation {
   amount: string;          // Decimal приходит строкой
   periodicity: Periodicity;
   comment: string | null;
+  category_id: number | null;
+  category_name: string | null;
   sort_order: number;
   created_at: string;
 }
@@ -16,6 +18,7 @@ export interface RecurringObligation {
 export const PERIODICITY_RU: Record<Periodicity, string> = {
   monthly: "ежемесячно",
   weekly: "еженедельно",
+  yearly: "ежегодно",
   one_time: "разово",
 };
 
@@ -29,13 +32,14 @@ export function createObligation(payload: {
   amount: number | string;
   periodicity: Periodicity;
   comment?: string | null;
+  category_id?: number | null;
 }): Promise<RecurringObligation> {
   return api<RecurringObligation>("/api/recurring-obligations", { method: "POST", body: payload });
 }
 
 export function updateObligation(
   id: number,
-  payload: Partial<{ name: string; amount: number | string; periodicity: Periodicity; comment: string | null }>
+  payload: Partial<{ name: string; amount: number | string; periodicity: Periodicity; comment: string | null; category_id: number | null }>
 ): Promise<RecurringObligation> {
   return api<RecurringObligation>(`/api/recurring-obligations/${id}`, { method: "PATCH", body: payload });
 }

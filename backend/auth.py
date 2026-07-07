@@ -63,6 +63,14 @@ def require_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_platform_owner(user: User = Depends(get_current_user)) -> User:
+    """Владелец платформы (супер-админ-панель: все организации, создание/удаление,
+    смена плана). Это флаг is_platform_owner, НЕ роль superadmin (та org-уровневая)."""
+    if not user.is_platform_owner:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Доступ только для владельца платформы")
+    return user
+
+
 # ===================== Расширенные ролевые проверки =====================
 # Иерархия прав:
 #   superadmin (Татина) ⊇ admin ⊇ gen_director ⊇ auditor (для просмотра)
@@ -107,4 +115,30 @@ def require_director_or_auditor(user: User = Depends(get_current_user)) -> User:
 def require_auditor(user: User = Depends(get_current_user)) -> User:
     if user.role not in ("admin", "auditor", "superadmin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Только аудитор или admin")
+    return user
+
+
+# ===================== Проектные пространства =====================
+# Управлять (создавать/редактировать/удалять) пространствами и видеть их детали
+# целиком могут superadmin и gen_director — те же роли, что видят конфиденциальных.
+WORKSPACE_MANAGER_ROLES = ("superadmin", "gen_director")
+
+
+def can_manage_workspaces(user: User) -> bool:
+    """Создание/редактирование/удаление пространств и их участников."""
+    return user.role in WORKSPACE_MANAGER_ROLES
+
+
+def can_view_workspace_aggregate(user: User) -> bool:
+    """admin/auditor видят только финансовый агрегат по владельцу пространства
+    (получено/потрачено/остаток), без построчной детализации."""
+    return user.role in ("admin", "auditor")
+
+
+def require_workspace_manager(user: User = Depends(get_current_user)) -> User:
+    if not can_manage_workspaces(user):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Управлять проектными пространствами может только директор или суперадмин",
+        )
     return user

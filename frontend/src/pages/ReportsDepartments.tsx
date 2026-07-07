@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
@@ -29,23 +29,23 @@ export default function ReportsDepartments() {
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
   const { display } = useDisplayCurrency();
+  const nav = useNavigate();
   const [data, setData] = useState<Report | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [open, setOpen] = useState<Set<number>>(new Set());
   const [exporting, setExporting] = useState(false);
 
-  useEffect(() => {
-    setData(null); setErr(null);
+  function loadReport() {
     api<Report>(`/api/reports/by-department?year=${year}&month=${month}&currency=${display}&_t=${Date.now()}`)
       .then(setData).catch((e) => setErr(e.message));
+  }
+  useEffect(() => {
+    setData(null); setErr(null);
+    loadReport();
   }, [year, month, display]);
 
   const sym = data?.currency === "USD" ? "$" : "с";
   const fmt = (n: number) => n.toLocaleString("ru-RU");
 
-  function toggle(id: number) {
-    setOpen((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
-  }
   async function onExport() {
     setExporting(true);
     try {
@@ -98,12 +98,12 @@ export default function ReportsDepartments() {
 
           <div className="grid" style={{ gap: 10 }}>
             {data.departments.map((d) => {
-              const isOpen = open.has(d.id);
               const s = d.summary;
               return (
                 <div key={d.id} className="card" style={{ padding: 0 }}>
-                  <div className="row between" style={{ padding: 14, cursor: "pointer", flexWrap: "wrap", gap: 8 }} onClick={() => toggle(d.id)}>
-                    <span style={{ fontWeight: 600 }}>{isOpen ? "▼" : "▶"} {d.name}</span>
+                  <div className="row between" style={{ padding: 14, cursor: "pointer", flexWrap: "wrap", gap: 8 }}
+                    onClick={() => nav(`/reports/departments/${d.id}?year=${year}&month=${month}`)}>
+                    <span style={{ fontWeight: 600 }}>{d.name} →</span>
                     <div className="row" style={{ gap: 16, flexWrap: "wrap", fontSize: 14 }}>
                       <span className="muted">приход <b style={{ color: "var(--success)" }}>{fmt(s.received)} {sym}</b></span>
                       <span className="muted">расход <b style={{ color: "var(--danger)" }}>{fmt(s.spent)} {sym}</b></span>
@@ -111,36 +111,6 @@ export default function ReportsDepartments() {
                       <span className="muted">{s.operations_count} опер.</span>
                     </div>
                   </div>
-                  {isOpen && (
-                    <div className="grid" style={{ gridTemplateColumns: "1fr 1fr", gap: 16, padding: 14, paddingTop: 0 }}>
-                      <div>
-                        <div style={{ fontWeight: 600, marginBottom: 8 }}>Топ категорий расходов</div>
-                        {d.top_categories.length === 0 && <div className="muted">Нет расходов</div>}
-                        {d.top_categories.map((c, i) => (
-                          <div key={i} className="row between" style={{ padding: "4px 0" }}>
-                            <span>{c.name}</span>
-                            <span><b>{fmt(c.amount)} {sym}</b> <span className="muted" style={{ fontSize: 12 }}>{c.percent}%</span></span>
-                          </div>
-                        ))}
-                      </div>
-                      <div style={{ overflow: "auto" }}>
-                        <div style={{ fontWeight: 600, marginBottom: 8 }}>Сотрудники</div>
-                        <table>
-                          <thead><tr><th>Имя</th><th style={{ textAlign: "right" }}>Получил</th><th style={{ textAlign: "right" }}>Потратил</th></tr></thead>
-                          <tbody>
-                            {d.employees.length === 0 && <tr><td colSpan={3} className="muted">Нет сотрудников</td></tr>}
-                            {d.employees.map((e) => (
-                              <tr key={e.id}>
-                                <td><Link to={`/reports/employees/${e.id}?month=${month}&year=${year}`}>{e.name}</Link></td>
-                                <td style={{ textAlign: "right" }}>{fmt(e.received)} {sym}</td>
-                                <td style={{ textAlign: "right", fontWeight: 600 }}>{fmt(e.spent)} {sym}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
                 </div>
               );
             })}

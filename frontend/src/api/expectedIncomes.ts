@@ -8,7 +8,7 @@ export interface ExpectedIncome {
   user_id: number;
   name: string;
   amount: string;
-  currency: "KGS" | "USD";
+  currency: "KGS" | "USD" | "EUR";
   amount_kgs: string | null;
   expected_date: string | null;
   periodicity: ExpPeriodicity;
@@ -33,7 +33,7 @@ export function listExpected(userId?: number): Promise<ExpectedIncome[]> {
 export function createExpected(payload: {
   name: string;
   amount: number | string;
-  currency: "KGS" | "USD";
+  currency: "KGS" | "USD" | "EUR";
   expected_date?: string | null;
   periodicity: ExpPeriodicity;
   comment?: string | null;
@@ -46,7 +46,7 @@ export function updateExpected(
   payload: Partial<{
     name: string;
     amount: number | string;
-    currency: "KGS" | "USD";
+    currency: "KGS" | "USD" | "EUR";
     expected_date: string | null;
     periodicity: ExpPeriodicity;
     comment: string | null;

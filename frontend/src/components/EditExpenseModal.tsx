@@ -25,7 +25,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   const [departmentId, setDepartmentId] = useState("");
   const [form, setForm] = useState({
     amount: String(expense.amount),
-    currency: (expense.currency || "KGS") as "KGS" | "USD" | "RUB",
+    currency: (expense.currency || "KGS") as "KGS" | "USD" | "EUR" | "RUB",
     category_id: expense.category_id ? String(expense.category_id) : "",
     description: expense.description || "",
     spent_at: expense.spent_at ? expense.spent_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
@@ -34,7 +34,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
 
   useEffect(() => {
     api<Category[]>("/api/categories").then(setCategories).catch(() => {});
-    listDepartments().then(setDepartments).catch(() => {});
+    listDepartments(true).then(setDepartments).catch(() => {});
   }, []);
 
   async function submit(e: React.FormEvent) {
@@ -82,6 +82,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
               <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value as any })}>
                 <option value="KGS">KGS</option>
                 <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
                 <option value="RUB">RUB</option>
               </select>
             </div>

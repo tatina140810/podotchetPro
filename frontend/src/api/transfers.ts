@@ -20,7 +20,7 @@ export interface BalanceTopUp {
   user_id: number;
   user_name: string | null;
   amount: string;
-  currency: "KGS" | "USD" | "RUB" | string;
+  currency: "KGS" | "USD" | "EUR" | "RUB" | string;
   amount_kgs: string | null;
   note: string | null;
   date: string;        // бизнес-дата операции
@@ -47,7 +47,7 @@ export function topupUser(
   userId: number,
   payload: {
     amount: number | string;
-    currency?: "KGS" | "USD" | "RUB";
+    currency?: "KGS" | "USD" | "EUR" | "RUB";
     note?: string | null;
     date?: string;
     category_id?: number | null;
@@ -73,7 +73,7 @@ export function updateTopup(
   id: number,
   payload: Partial<{
     amount: number | string;
-    currency: "KGS" | "USD" | "RUB";
+    currency: "KGS" | "USD" | "EUR" | "RUB";
     note: string | null;
     date: string;
     user_id: number;

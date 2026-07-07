@@ -24,7 +24,7 @@ const CHIPS: { key: Chip; label: string }[] = [
 const PERIODS: ExpPeriodicity[] = ["one_time", "monthly", "weekly"];
 
 function symFor(cur: string): string {
-  return cur === "USD" ? "$" : "с";
+  return cur === "USD" ? "$" : cur === "EUR" ? "€" : cur === "RUB" ? "₽" : "с";
 }
 function fmt(n: number): string {
   return n.toLocaleString("ru-RU");
@@ -40,7 +40,7 @@ interface FormState {
   id: number | null;
   name: string;
   amount: string;
-  currency: "KGS" | "USD";
+  currency: "KGS" | "USD" | "EUR";
   expected_date: string;
   periodicity: ExpPeriodicity;
   comment: string;
@@ -251,9 +251,10 @@ export function ExpectedIncomes({
                 <div style={{ flex: 1, minWidth: 90 }}>
                   <label>Валюта</label>
                   <select value={form.currency}
-                    onChange={(ev) => setForm({ ...form, currency: ev.target.value as "KGS" | "USD" })}>
+                    onChange={(ev) => setForm({ ...form, currency: ev.target.value as "KGS" | "USD" | "EUR" })}>
                     <option value="KGS">KGS — с</option>
                     <option value="USD">USD — $</option>
+                    <option value="EUR">EUR — €</option>
                   </select>
                 </div>
               </div>

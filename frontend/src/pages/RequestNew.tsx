@@ -35,7 +35,7 @@ export default function RequestNew() {
   const [title, setTitle] = useState("");
   const [approverId, setApproverId] = useState<number | "">("");
   const [departmentId, setDepartmentId] = useState<number | "">("");
-  const [currency, setCurrency] = useState<"KGS" | "USD" | "RUB">("KGS");
+  const [currency, setCurrency] = useState<"KGS" | "USD" | "EUR" | "RUB">("KGS");
   const [items, setItems] = useState<DraftItem[]>([{ ...EMPTY_ITEM }]);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -47,7 +47,7 @@ export default function RequestNew() {
   useEffect(() => {
     listColleagues().then(setColleagues).catch(() => {});
     api<Category[]>("/api/categories").then(setCategories).catch(() => {});
-    listDepartments()
+    listDepartments(true)
       .then((ds) => {
         setDepartments(ds);
         // Если подразделение одно — подставляем автоматически.
@@ -249,9 +249,10 @@ export default function RequestNew() {
           </div>
           <div style={{ flex: 1, minWidth: 110 }}>
             <label>Валюта</label>
-            <select value={currency} onChange={(e) => setCurrency(e.target.value as "KGS" | "USD" | "RUB")}>
+            <select value={currency} onChange={(e) => setCurrency(e.target.value as "KGS" | "USD" | "EUR" | "RUB")}>
               <option value="KGS">KGS</option>
               <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
               <option value="RUB">RUB</option>
             </select>
           </div>

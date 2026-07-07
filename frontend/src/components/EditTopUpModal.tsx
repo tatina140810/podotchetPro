@@ -21,7 +21,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [form, setForm] = useState({
     amount: String(topup.amount),
-    currency: (topup.currency || "KGS") as "KGS" | "USD" | "RUB",
+    currency: (topup.currency || "KGS") as "KGS" | "USD" | "EUR" | "RUB",
     note: topup.note || "",
     user_id: String(topup.user_id),
     admin_id: String(topup.admin_id),
@@ -76,9 +76,10 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
             </div>
             <div style={{ flex: 1, minWidth: 100 }}>
               <label>Валюта</label>
-              <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value as "KGS" | "USD" | "RUB" })}>
+              <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value as "KGS" | "USD" | "EUR" | "RUB" })}>
                 <option value="KGS">KGS</option>
                 <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
                 <option value="RUB">RUB</option>
               </select>
             </div>

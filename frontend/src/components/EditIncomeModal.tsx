@@ -8,7 +8,7 @@ interface Props {
   income: {
     id: number;
     amount: string | number;
-    currency: "KGS" | "USD" | "RUB" | string;
+    currency: "KGS" | "USD" | "EUR" | "RUB" | string;
     source: string;
     description: string | null;
     received_by_id: number;
@@ -23,7 +23,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [form, setForm] = useState({
     amount: String(income.amount),
-    currency: (income.currency || "KGS") as "KGS" | "USD" | "RUB",
+    currency: (income.currency || "KGS") as "KGS" | "USD" | "EUR" | "RUB",
     source: income.source || "",
     description: income.description || "",
     received_by_id: String(income.received_by_id),
@@ -76,6 +76,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
               <select value={form.currency} onChange={(e) => setForm({ ...form, currency: e.target.value as any })}>
                 <option value="KGS">KGS</option>
                 <option value="USD">USD</option>
+                <option value="EUR">EUR</option>
                 <option value="RUB">RUB</option>
               </select>
             </div>

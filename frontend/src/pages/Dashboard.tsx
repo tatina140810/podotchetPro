@@ -190,7 +190,7 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
   const [rubKgs, setRubKgs] = useState<number | null>(null);
   const [form, setForm] = useState({
     amount: "",
-    currency: "KGS" as "KGS" | "USD" | "RUB",
+    currency: "KGS" as "KGS" | "USD" | "EUR" | "RUB",
     source: "",
     description: "",
     // По умолчанию приход «себе», если фича включена (можно поменять получателя).
@@ -274,10 +274,11 @@ export function IncomeModal({ onClose, onSaved }: { onClose: () => void; onSaved
               <label>Валюта</label>
               <select
                 value={form.currency}
-                onChange={(e) => setForm({ ...form, currency: e.target.value as "KGS" | "USD" | "RUB" })}
+                onChange={(e) => setForm({ ...form, currency: e.target.value as "KGS" | "USD" | "EUR" | "RUB" })}
               >
                 <option value="KGS">KGS — сом</option>
                 <option value="USD">USD — $</option>
+                <option value="EUR">EUR — €</option>
                 <option value="RUB">RUB — ₽</option>
               </select>
             </div>

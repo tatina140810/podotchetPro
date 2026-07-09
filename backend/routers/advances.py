@@ -170,6 +170,9 @@ def create_transfer(
         purpose=payload.purpose,
         comment=payload.comment,
         issued_at=datetime.utcnow(),
+        # Привязка к пространству получателя — чтобы передача подотчётному внутри
+        # пространства отражалась в его учёте (как выдача/расход). None в основном.
+        workspace_id=member_active_workspace_id(db, sub.id, me.org_id),
     )
     db.add(a)
     db.commit()

@@ -24,7 +24,11 @@ from schemas import (
 )
 from services.balance import compute_current_balance, load_org_rates
 from services.exchange import get_current_rate
-from services.permissions import owner_isolation_ws_id, workspace_member_ids
+from services.permissions import (
+    member_active_workspace_id,
+    owner_isolation_ws_id,
+    workspace_member_ids,
+)
 from services.push_service import build_payload, send_push_to_user_sync
 
 
@@ -101,6 +105,7 @@ def _sync_topup_expense(db: Session, topup: BalanceTopUp) -> None:
     e.employee_id = topup.user_id
     e.category_id = topup.category_id
     e.department_id = topup.department_id
+    e.workspace_id = topup.workspace_id  # авто-расход в том же пространстве, что и выдача
     e.amount = topup.amount
     e.currency = topup.currency
     e.amount_kgs = topup.amount_kgs
@@ -274,6 +279,10 @@ def topup_user(
         date=payload.date or _dt.utcnow(),
         category_id=payload.category_id,
         department_id=payload.department_id,
+        # Привязка к активному пространству получателя — как у выдач (create_advance).
+        # Так выдача с категорией и авто-расход попадают в пространство участника.
+        # В основном пространстве получатель не участник → None (поведение не меняется).
+        workspace_id=member_active_workspace_id(db, target.id, admin.org_id),
     )
     db.add(t)
     db.flush()  # нужен t.id и связь категории до _sync_topup_expense
@@ -372,6 +381,8 @@ def update_topup(
                     f"Курс {t.currency}/KGS не установлен — пересчёт невозможен",
                 )
             t.amount_kgs = _D(str(t.amount)) * rate
+    # Пере-привязываем к пространству получателя (и бэкфилл старых записей без него).
+    t.workspace_id = member_active_workspace_id(db, t.user_id, admin.org_id)
     db.flush()  # зафиксировать изменения выдачи до синхронизации авто-расхода
     # Держим привязанный авто-расход в соответствии: создаём/обновляем/удаляем по
     # текущей категории и сумме. Закрывает баг «при правке из истории расход не пересчитывался».

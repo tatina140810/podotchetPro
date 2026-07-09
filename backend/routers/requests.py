@@ -32,7 +32,11 @@ from schemas import (
     MoneyRequestUpdate,
 )
 from services.push_service import build_payload, send_push_to_user_sync
-from services.permissions import owner_isolation_ws_id, workspace_member_ids
+from services.permissions import (
+    member_active_workspace_id,
+    owner_isolation_ws_id,
+    workspace_member_ids,
+)
 
 
 router = APIRouter(prefix="/api/requests", tags=["requests"])
@@ -486,6 +490,8 @@ def approve_request(
             funded_by_id=req.approver_id,
             source_request_id=req.id,
             expense_type="expense",
+            # Расход заявителя-участника уходит в его пространство (как обычный расход).
+            workspace_id=member_active_workspace_id(db, req.requester_id, req.org_id),
             spent_at=datetime.utcnow(),
         )
         db.add(e)

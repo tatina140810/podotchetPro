@@ -382,6 +382,8 @@ def create_expense(
             note=f"Из расхода: {payload.description or 'без описания'}",
             date=payload.spent_at or datetime.utcnow(),
             department_id=department_id,
+            # Привязка к пространству получателя — деньги попадают в его учёт.
+            workspace_id=member_active_workspace_id(db, recipient.id, me.org_id),
         ))
 
     db.commit()

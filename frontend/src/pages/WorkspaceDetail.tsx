@@ -6,11 +6,13 @@ import {
   addWorkspaceMember,
   deactivateWorkspace,
   getWorkspace,
+  listMemberBalances,
   listWorkspaceExpenses,
   listWorkspaceMembers,
   removeWorkspaceMember,
   type Workspace,
   type WorkspaceMember,
+  type WorkspaceMemberBalance,
   type WorkspaceExpense,
 } from "../api/workspaces";
 
@@ -105,16 +107,20 @@ interface Employee { id: number; name: string; }
 function Members({ wsId, ownerId, onChange }: { wsId: number; ownerId?: number; onChange: () => void }) {
   const toast = useToast();
   const [members, setMembers] = useState<WorkspaceMember[] | null>(null);
+  const [balances, setBalances] = useState<WorkspaceMemberBalance[]>([]);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [addId, setAddId] = useState("");
 
   function load() {
     listWorkspaceMembers(wsId).then(setMembers).catch((e) => toast.show("error", e.message));
+    listMemberBalances(wsId).then(setBalances).catch(() => {});
   }
   useEffect(() => {
     load();
     api<Employee[]>("/api/users").then(setEmployees).catch(() => {});
   }, [wsId]);
+
+  const balOf = (uid: number) => balances.find((b) => b.user_id === uid);
 
   async function add() {
     if (!addId) return;
@@ -135,7 +141,7 @@ function Members({ wsId, ownerId, onChange }: { wsId: number; ownerId?: number; 
   }
 
   return (
-    <div className="card">
+    <div className="card" style={{ overflow: "auto" }}>
       <div className="row" style={{ gap: 8, marginBottom: 12 }}>
         <select value={addId} onChange={(e) => setAddId(e.target.value)} style={{ flex: 1 }}>
           <option value="">+ добавить участника —</option>
@@ -148,24 +154,45 @@ function Members({ wsId, ownerId, onChange }: { wsId: number; ownerId?: number; 
       ) : (
         <table style={{ width: "100%" }}>
           <thead>
-            <tr><th style={{ textAlign: "left" }}>ФИО</th><th style={{ textAlign: "left" }}>Добавлен</th><th></th></tr>
+            <tr>
+              <th style={{ textAlign: "left" }}>ФИО</th>
+              <th style={{ textAlign: "right" }}>Получено</th>
+              <th style={{ textAlign: "right" }}>Потрачено</th>
+              <th style={{ textAlign: "right" }}>Передал</th>
+              <th style={{ textAlign: "right" }}>Остаток</th>
+              <th></th>
+            </tr>
           </thead>
           <tbody>
-            {members.map((m) => (
-              <tr key={m.id}>
-                <td>{m.user?.name}{m.user_id === ownerId ? " (владелец)" : ""}</td>
-                <td className="muted">{new Date(m.added_at).toLocaleDateString("ru-RU")}</td>
-                <td style={{ textAlign: "right" }}>
-                  {m.user_id !== ownerId && (
-                    <button className="ghost" style={{ color: "var(--danger)", padding: "2px 8px" }}
-                      onClick={() => remove(m.user_id)}>Удалить</button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            {members.map((m) => {
+              const b = balOf(m.user_id);
+              const received = b ? Number(b.received_external) + Number(b.received_internal) : 0;
+              const bal = b ? Number(b.balance) : 0;
+              return (
+                <tr key={m.id}>
+                  <td>{m.user?.name}{m.user_id === ownerId ? " (владелец)" : ""}</td>
+                  <td style={{ textAlign: "right" }}>{received.toLocaleString("ru-RU")}</td>
+                  <td style={{ textAlign: "right" }}>{b ? Number(b.spent).toLocaleString("ru-RU") : "0"}</td>
+                  <td style={{ textAlign: "right" }}>{b ? Number(b.transferred_out).toLocaleString("ru-RU") : "0"}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600, color: bal < 0 ? "var(--danger)" : undefined }}>
+                    {bal.toLocaleString("ru-RU")}
+                  </td>
+                  <td style={{ textAlign: "right" }}>
+                    {m.user_id !== ownerId && (
+                      <button className="ghost" style={{ color: "var(--danger)", padding: "2px 8px" }}
+                        onClick={() => remove(m.user_id)}>Удалить</button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       )}
+      <div className="muted" style={{ fontSize: 12, marginTop: 10 }}>
+        Суммы в сомах. «Получено» — извне пространства и от других участников;
+        «Передал» — выдано другим участникам; «Остаток» = получено − потрачено − передал.
+      </div>
     </div>
   );
 }

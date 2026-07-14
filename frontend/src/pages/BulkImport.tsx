@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
+import { CategoryPicker } from "../components/CategoryPicker";
 import { useAuth, type UserOut } from "../context/AuthContext";
 import { useSettings } from "../context/SettingsContext";
 import { listColleagues } from "../api/users";
@@ -39,40 +40,6 @@ interface Row {
 
 interface CategoryOpt { id: number; name: string; display_name?: string | null; parent_id?: number | null }
 
-// Каскадный выбор категории для ячейки таблицы: селект «Категория» (только корневые),
-// при выборе категории с подкатегориями появляется второй селект. Единообразно с формой
-// расхода и удобнее нативного optgroup (особенно на Windows/сенсоре).
-function CategoryCascade({
-  cats, parentId, categoryId, onChange, onKeyDown,
-}: {
-  cats: CategoryOpt[];
-  parentId: string;
-  categoryId: string;
-  onChange: (patch: { parent_category_id?: string; category_id: string }) => void;
-  onKeyDown?: (e: React.KeyboardEvent) => void;
-}) {
-  const roots = cats.filter((c) => !c.parent_id);
-  const subs = parentId ? cats.filter((c) => String(c.parent_id) === parentId) : [];
-  const parentName = roots.find((c) => String(c.id) === parentId)?.name;
-  return (
-    <div className="grid" style={{ gap: 4 }}>
-      <select
-        value={parentId}
-        onChange={(e) => onChange({ parent_category_id: e.target.value, category_id: e.target.value })}
-        onKeyDown={onKeyDown}
-      >
-        <option value="">— категория —</option>
-        {roots.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-      </select>
-      {subs.length > 0 && (
-        <select value={categoryId} onChange={(e) => onChange({ category_id: e.target.value })} onKeyDown={onKeyDown}>
-          <option value={parentId}>вся «{parentName}»</option>
-          {subs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-        </select>
-      )}
-    </div>
-  );
-}
 
 interface ImportError { index: number; error: string }
 interface ImportResult { created: number; errors: ImportError[] }
@@ -346,12 +313,11 @@ export default function BulkImport() {
                 </td>
                 <td>
                   {r.type === "expense" && (
-                    <CategoryCascade
+                    <CategoryPicker
                       cats={categories}
-                      parentId={r.parent_category_id}
-                      categoryId={r.category_id}
-                      onChange={(patch) => updateRow(idx, patch)}
-                      onKeyDown={(e) => onKeyDown(e, idx)}
+                      value={r.category_id}
+                      onChange={(id) => updateRow(idx, { category_id: id })}
+                      compact
                     />
                   )}
                   {r.type === "income" && (
@@ -388,12 +354,11 @@ export default function BulkImport() {
                   )}
                   {r.type === "topup" && (
                     <div className="grid" style={{ gap: 4 }}>
-                      <CategoryCascade
+                      <CategoryPicker
                         cats={categories}
-                        parentId={r.parent_category_id}
-                        categoryId={r.category_id}
-                        onChange={(patch) => updateRow(idx, patch)}
-                        onKeyDown={(e) => onKeyDown(e, idx)}
+                        value={r.category_id}
+                        onChange={(id) => updateRow(idx, { category_id: id })}
+                        compact
                       />
                       <select
                         value={r.issued_by_id}

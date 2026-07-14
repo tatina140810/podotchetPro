@@ -4,8 +4,8 @@
  * «›»; при наведении (или клике на планшете) сбоку выпадает список её подкатегорий +
  * «вся категория».
  *
- * Дропдаун и fly-out рендерятся через портал (position: fixed от кнопки), чтобы их не
- * обрезал overflow контейнера таблицы (импорт истории) или карточки формы.
+ * И основной список, и fly-out рендерятся через ОТДЕЛЬНЫЕ порталы с position:fixed,
+ * чтобы их не обрезал overflow контейнера таблицы/карточки и прокрутка самой панели.
  */
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
@@ -25,13 +25,17 @@ interface Props {
 }
 
 const PANEL_W = 240;
+type Rect = { top: number; left: number; right: number };
 
 export function CategoryPicker({ cats, value, onChange, placeholder = "— категория —", compact }: Props) {
   const [open, setOpen] = useState(false);
   const [hover, setHover] = useState<number | null>(null);
-  const [pos, setPos] = useState<{ top: number; left: number; width: number; flip: boolean }>({ top: 0, left: 0, width: PANEL_W, flip: false });
+  const [hoverRect, setHoverRect] = useState<Rect | null>(null);
+  const [pos, setPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: PANEL_W });
   const btnRef = useRef<HTMLButtonElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+  const subRef = useRef<HTMLDivElement>(null);
+  const closeTimer = useRef<number | undefined>(undefined);
 
   const roots = cats.filter((c) => !c.parent_id);
   const kidsOf = (pid: number) => cats.filter((c) => c.parent_id === pid);
@@ -46,30 +50,23 @@ export function CategoryPicker({ cats, value, onChange, placeholder = "— ка�
   function computePos() {
     const b = btnRef.current?.getBoundingClientRect();
     if (!b) return;
-    const width = Math.max(b.width, PANEL_W);
-    // Если справа мало места для fly-out — открываем подменю влево.
-    const flip = b.left + width + PANEL_W + 12 > window.innerWidth;
-    setPos({ top: b.bottom + 4, left: b.left, width, flip });
+    setPos({ top: b.bottom + 4, left: b.left, width: Math.max(b.width, PANEL_W) });
   }
-
-  useLayoutEffect(() => {
-    if (open) computePos();
-  }, [open]);
+  useLayoutEffect(() => { if (open) computePos(); }, [open]);
 
   useEffect(() => {
     if (!open) return;
     const onDoc = (e: MouseEvent) => {
+      const t = e.target as Node;
       if (
-        panelRef.current && !panelRef.current.contains(e.target as Node) &&
-        btnRef.current && !btnRef.current.contains(e.target as Node)
-      ) {
-        setOpen(false); setHover(null);
-      }
+        panelRef.current && !panelRef.current.contains(t) &&
+        btnRef.current && !btnRef.current.contains(t) &&
+        (!subRef.current || !subRef.current.contains(t))
+      ) { close(); }
     };
-    const onScrollResize = () => { setOpen(false); setHover(null); };
+    const onScrollResize = () => close();
     document.addEventListener("mousedown", onDoc);
     window.addEventListener("resize", onScrollResize);
-    // скролл любого контейнера закрывает (позиция fixed устарела бы)
     window.addEventListener("scroll", onScrollResize, true);
     return () => {
       document.removeEventListener("mousedown", onDoc);
@@ -78,129 +75,107 @@ export function CategoryPicker({ cats, value, onChange, placeholder = "— ка�
     };
   }, [open]);
 
-  function choose(id: string) {
-    onChange(id);
-    setOpen(false);
-    setHover(null);
+  function close() { setOpen(false); setHover(null); setHoverRect(null); }
+  function choose(id: string) { onChange(id); close(); }
+  function openSub(id: number, el: HTMLElement) {
+    window.clearTimeout(closeTimer.current);
+    const r = el.getBoundingClientRect();
+    setHover(id);
+    setHoverRect({ top: r.top, left: r.left, right: r.right });
   }
+  function scheduleClose() {
+    closeTimer.current = window.setTimeout(() => { setHover(null); setHoverRect(null); }, 180);
+  }
+  function keepSub() { window.clearTimeout(closeTimer.current); }
 
   const itemPad = compact ? "7px 11px" : "9px 12px";
   const fontSize = compact ? 13 : 14;
+  const hoverParent = hover != null ? roots.find((c) => c.id === hover) : null;
+  // fly-out влево, если справа не помещается
+  const flipLeft = hoverRect ? hoverRect.right + PANEL_W + 12 > window.innerWidth : false;
+
+  const panelBox: React.CSSProperties = {
+    position: "fixed", zIndex: 9999,
+    background: "#171a2b", border: "1px solid rgba(255,255,255,.14)",
+    borderRadius: 10, boxShadow: "0 10px 30px rgba(0,0,0,.55)", padding: 4,
+  };
 
   return (
     <>
       <button
         ref={btnRef}
         type="button"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => (open ? close() : setOpen(true))}
         style={{
-          width: "100%",
-          textAlign: "left",
-          background: "#1a1d2e",
-          border: "1px solid rgba(255,255,255,.14)",
-          borderRadius: 8,
+          width: "100%", textAlign: "left", background: "#1a1d2e",
+          border: "1px solid rgba(255,255,255,.14)", borderRadius: 8,
           padding: compact ? "7px 10px" : "9px 12px",
-          color: selected ? "#e8eaf2" : "#8a90a2",
-          fontSize,
-          cursor: "pointer",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          whiteSpace: "nowrap",
+          color: selected ? "#e8eaf2" : "#8a90a2", fontSize,
+          cursor: "pointer", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}
       >
         {label} <span style={{ float: "right", opacity: 0.6 }}>▾</span>
       </button>
 
       {open && createPortal(
-        <div
-          ref={panelRef}
-          style={{
-            position: "fixed",
-            zIndex: 9999,
-            top: pos.top,
-            left: pos.left,
-            width: pos.width,
-            maxHeight: 340,
-            overflowY: "auto",
-            overflowX: "visible",
-            background: "#171a2b",
-            border: "1px solid rgba(255,255,255,.14)",
-            borderRadius: 10,
-            boxShadow: "0 10px 30px rgba(0,0,0,.55)",
-            padding: 4,
-          }}
-        >
-          <div
-            onClick={() => choose("")}
-            style={{ padding: itemPad, borderRadius: 6, cursor: "pointer", color: "#8a90a2", fontSize }}
-          >
+        <div ref={panelRef} style={{ ...panelBox, top: pos.top, left: pos.left, width: pos.width, maxHeight: 340, overflowY: "auto" }}>
+          <div onClick={() => choose("")} style={{ padding: itemPad, borderRadius: 6, cursor: "pointer", color: "#8a90a2", fontSize }}>
             {placeholder}
           </div>
           {roots.map((parent) => {
-            const kids = kidsOf(parent.id);
-            const hasKids = kids.length > 0;
+            const hasKids = kidsOf(parent.id).length > 0;
             const isHover = hover === parent.id;
             return (
               <div
                 key={parent.id}
-                onMouseEnter={() => setHover(hasKids ? parent.id : null)}
-                onClick={() => (hasKids ? setHover(isHover ? null : parent.id) : choose(String(parent.id)))}
+                onMouseEnter={(e) => (hasKids ? openSub(parent.id, e.currentTarget) : (setHover(null), setHoverRect(null)))}
+                onMouseLeave={() => hasKids && scheduleClose()}
+                onClick={(e) => (hasKids ? openSub(parent.id, e.currentTarget) : choose(String(parent.id)))}
                 style={{
-                  position: "relative",
-                  padding: itemPad,
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  fontSize,
-                  background: isHover ? "#6c5ce7" : "transparent",
-                  color: "#e8eaf2",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                  gap: 8,
+                  padding: itemPad, borderRadius: 6, cursor: "pointer", fontSize,
+                  background: isHover ? "#6c5ce7" : "transparent", color: "#e8eaf2",
+                  display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8,
                 }}
               >
                 <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{parent.name}</span>
                 {hasKids && <span style={{ opacity: 0.7 }}>›</span>}
-
-                {hasKids && isHover && (
-                  <div
-                    style={{
-                      position: "absolute",
-                      top: -4,
-                      [pos.flip ? "right" : "left"]: "100%",
-                      [pos.flip ? "marginRight" : "marginLeft"]: 3,
-                      width: PANEL_W,
-                      maxHeight: 320,
-                      overflowY: "auto",
-                      background: "#1c2033",
-                      border: "1px solid rgba(255,255,255,.16)",
-                      borderRadius: 10,
-                      boxShadow: "0 10px 30px rgba(0,0,0,.6)",
-                      padding: 4,
-                    }}
-                  >
-                    <div
-                      onClick={(e) => { e.stopPropagation(); choose(String(parent.id)); }}
-                      style={{ padding: itemPad, borderRadius: 6, cursor: "pointer", color: "#8a90a2", fontSize }}
-                    >
-                      вся «{parent.name}»
-                    </div>
-                    {kids.map((k) => (
-                      <div
-                        key={k.id}
-                        onClick={(e) => { e.stopPropagation(); choose(String(k.id)); }}
-                        style={{ padding: itemPad, borderRadius: 6, cursor: "pointer", fontSize, color: "#e8eaf2", whiteSpace: "nowrap" }}
-                        onMouseEnter={(e) => (e.currentTarget.style.background = "#6c5ce7")}
-                        onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
-                      >
-                        {k.name}
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             );
           })}
+        </div>,
+        document.body,
+      )}
+
+      {open && hoverParent && hoverRect && createPortal(
+        <div
+          ref={subRef}
+          onMouseEnter={keepSub}
+          onMouseLeave={scheduleClose}
+          style={{
+            ...panelBox,
+            top: hoverRect.top,
+            left: flipLeft ? undefined : hoverRect.right + 3,
+            right: flipLeft ? window.innerWidth - hoverRect.left + 3 : undefined,
+            width: PANEL_W, maxHeight: 320, overflowY: "auto",
+          }}
+        >
+          <div
+            onClick={() => choose(String(hoverParent.id))}
+            style={{ padding: itemPad, borderRadius: 6, cursor: "pointer", color: "#8a90a2", fontSize }}
+          >
+            вся «{hoverParent.name}»
+          </div>
+          {kidsOf(hoverParent.id).map((k) => (
+            <div
+              key={k.id}
+              onClick={() => choose(String(k.id))}
+              style={{ padding: itemPad, borderRadius: 6, cursor: "pointer", fontSize, color: "#e8eaf2", whiteSpace: "nowrap" }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = "#6c5ce7")}
+              onMouseLeave={(e) => (e.currentTarget.style.background = "transparent")}
+            >
+              {k.name}
+            </div>
+          ))}
         </div>,
         document.body,
       )}

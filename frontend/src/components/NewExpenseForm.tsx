@@ -462,7 +462,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         {kind === "expense" && (
           <div>
             <label>Фото чека{requiresReceipt && " (обязательно)"}</label>
-            <input type="file" accept="image/*,application/pdf" capture="environment" onChange={onFile} />
+            <input type="file" accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" capture="environment" onChange={onFile} />
             {uploading && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>загружаю...</div>}
             {form.receipt_url && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>✓ {form.receipt_url}</div>}
           </div>

@@ -429,7 +429,7 @@ export default function BulkImport() {
                           прикрепить чек/документ
                           <input
                             type="file"
-                            accept="image/*,application/pdf"
+                            accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv"
                             style={{ display: "none" }}
                             onChange={(e) => onReceiptFile(idx, e.target.files?.[0])}
                           />

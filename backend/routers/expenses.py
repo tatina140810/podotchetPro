@@ -59,7 +59,22 @@ from routers.supplier_advances import record_purchase
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
 settings = get_settings()
 
-ALLOWED_CONTENT_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "application/pdf"}
+ALLOWED_CONTENT_TYPES = {
+    "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
+    "application/pdf",
+    # Офисные документы (Excel/Word) — накладные, акты, реестры.
+    "application/vnd.ms-excel",  # .xls
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",  # .xlsx
+    "application/msword",  # .doc
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",  # .docx
+    "text/csv",  # .csv
+}
+# Некоторые браузеры/ОС отдают xls/docx как application/octet-stream — тогда проверяем
+# по расширению файла из этого белого списка.
+ALLOWED_EXTS = {
+    ".jpg", ".jpeg", ".png", ".webp", ".heic", ".heif", ".pdf",
+    ".xls", ".xlsx", ".doc", ".docx", ".csv",
+}
 
 
 def _apply_workspace_filter(q, db: Session, me: User):
@@ -212,8 +227,9 @@ def export_expenses_xlsx(
 
 @router.post("/upload-receipt")
 async def upload_receipt(file: UploadFile = File(...), me: User = Depends(get_current_user)):
-    if file.content_type not in ALLOWED_CONTENT_TYPES:
-        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Неподдерживаемый тип: {file.content_type}")
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if file.content_type not in ALLOWED_CONTENT_TYPES and ext not in ALLOWED_EXTS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Неподдерживаемый тип: {file.content_type or ext or 'неизвестно'}")
 
     content = await file.read()
     size_mb = len(content) / 1024 / 1024

@@ -155,7 +155,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
             )}
             <label style={{ cursor: "pointer", color: "var(--accent)", fontSize: 13 }}>
               {uploading ? "загружаю..." : "+ прикрепить чек/документ"}
-              <input type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={onReceiptFile} disabled={uploading} />
+              <input type="file" accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" style={{ display: "none" }} onChange={onReceiptFile} disabled={uploading} />
             </label>
           </div>
           <div className="row" style={{ justifyContent: "flex-end" }}>

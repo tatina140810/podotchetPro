@@ -140,7 +140,7 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
                   {uploading ? "Загрузка…" : "Прикрепить чек"}
                   <input
                     type="file"
-                    accept="image/*,application/pdf"
+                    accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv"
                     onChange={onFile}
                     disabled={uploading}
                     style={{ display: "none" }}

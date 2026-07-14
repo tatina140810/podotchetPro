@@ -559,6 +559,7 @@ interface RecentOp {
   received_by_id?: number | null;
   user_id?: number | null;
   status?: string;
+  receipts?: { id: number | null; url: string; name: string | null }[];
 }
 
 interface DuplicatePair {
@@ -1001,6 +1002,22 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
                   </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {o.description || o.note || ""}
+                    {o.receipts && o.receipts.length > 0 && (
+                      <div style={{ marginTop: 3, display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        {o.receipts.map((r, i) => (
+                          <a
+                            key={i}
+                            href={r.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            style={{ color: "var(--accent)", fontSize: 11 }}
+                            title="Открыть чек/документ"
+                          >
+                            {r.name || `чек ${o.receipts!.length > 1 ? i + 1 : ""}`.trim()}
+                          </a>
+                        ))}
+                      </div>
+                    )}
                   </td>
                   <td>
                     <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>

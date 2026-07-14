@@ -435,6 +435,9 @@ def recent_operations(
 
     expense_rows = eq.order_by(Expense.spent_at.desc()).limit(take).all() if show_expense else []
     for e in expense_rows:
+        recs = [{"id": r.id, "url": r.file_url, "name": r.file_name} for r in e.receipts]
+        if not recs and e.receipt_url:  # legacy одиночный чек
+            recs = [{"id": None, "url": e.receipt_url, "name": None}]
         rows.append({
             "kind": "expense",
             "id": e.id,
@@ -449,6 +452,7 @@ def recent_operations(
             "status": e.status,
             "is_personal_contribution": bool(e.is_personal_contribution),
             "expense_type": e.expense_type,
+            "receipts": recs,
         })
 
     if include_income:

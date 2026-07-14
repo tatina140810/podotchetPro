@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 
 from auth import require_admin
 from database import get_db
-from models import BalanceTopUp, Category, Department, Expense, Income, IncomeSource, MoneyRequest, User
+from models import BalanceTopUp, Category, Department, Expense, ExpenseReceipt, Income, IncomeSource, MoneyRequest, User
 from schemas import (
     BulkImportError,
     BulkImportItem,
@@ -84,9 +84,19 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         # Помечаем по УЧАСТНИКУ-сотруднику (его пространство), а не по импортёру.
         workspace_id=member_active_workspace_id(db, employee.id, admin.org_id),
         is_personal_contribution=bool(item.is_personal_contribution),
+        receipt_url=item.receipt_url,
         spent_at=item.date or datetime.utcnow(),
     )
     db.add(e)
+    # Чек/документ, если приложен: дублируем в expense_receipts (единый источник галереи).
+    if item.receipt_url:
+        db.flush()  # нужен e.id
+        db.add(ExpenseReceipt(
+            org_id=admin.org_id,
+            expense_id=e.id,
+            file_url=item.receipt_url,
+            uploaded_by_id=employee.id,
+        ))
 
 
 def _create_income(db: Session, admin: User, item: BulkImportItem) -> None:

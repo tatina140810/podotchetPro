@@ -813,6 +813,8 @@ class BulkImportItem(BaseModel):
     date: Optional[datetime] = None
     # «Расход из личных средств в счёт подразделения» (только для expense).
     is_personal_contribution: bool = False
+    # Чек/документ (только для expense): url из POST /api/expenses/upload-receipt.
+    receipt_url: Optional[str] = None
 
 
 class BulkImportPayload(BaseModel):

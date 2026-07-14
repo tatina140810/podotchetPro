@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { api } from "../api/client";
+import { api, uploadReceipt } from "../api/client";
 import { useToast } from "../components/Toast";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { useAuth, type UserOut } from "../context/AuthContext";
@@ -36,6 +36,7 @@ interface Row {
   comment: string;            // комментарий к записи — для всех типов
   date: string;               // YYYY-MM-DD
   is_personal_contribution: boolean;  // только для expense — «Расход из личных средств в счёт подразделения»
+  receipt_url: string;        // только для expense — прикреплённый чек/документ (url после загрузки)
 }
 
 interface CategoryOpt { id: number; name: string; display_name?: string | null; parent_id?: number | null }
@@ -71,6 +72,7 @@ function makeEmptyRow(): Row {
     comment: "",
     date: new Date().toISOString().slice(0, 10),
     is_personal_contribution: false,
+    receipt_url: "",
   };
 }
 
@@ -130,6 +132,17 @@ export default function BulkImport() {
     }
   }
 
+  async function onReceiptFile(idx: number, file: File | undefined) {
+    if (!file) return;
+    try {
+      const { url } = await uploadReceipt(file);
+      updateRow(idx, { receipt_url: url });
+      toast.show("success", "Чек прикреплён");
+    } catch (err: any) {
+      toast.show("error", err.message);
+    }
+  }
+
   // Сводка: количество и общая сумма (по amount, без конвертации — превью)
   const summary = useMemo(() => {
     const counts: Record<Op, number> = { expense: 0, income: 0, topup: 0 };
@@ -165,6 +178,7 @@ export default function BulkImport() {
           base.category_id = r.category_id ? Number(r.category_id) : null;
           base.description = r.comment || null;
           base.is_personal_contribution = !!r.is_personal_contribution;
+          base.receipt_url = r.receipt_url || null;
         } else if (r.type === "income") {
           base.received_by_id = Number(r.user_id);
           if (useSourceDirectory && r.source_id && r.source_id !== "manual") {
@@ -395,6 +409,33 @@ export default function BulkImport() {
                       />
                       Из личных средств
                     </label>
+                  )}
+                  {r.type === "expense" && (
+                    <div style={{ marginTop: 4, fontSize: 12 }}>
+                      {r.receipt_url ? (
+                        <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--muted)" }}>
+                          <span>✓ чек прикреплён</span>
+                          <button
+                            type="button"
+                            className="ghost"
+                            style={{ fontSize: 11, padding: "1px 6px" }}
+                            onClick={() => updateRow(idx, { receipt_url: "" })}
+                          >
+                            убрать
+                          </button>
+                        </span>
+                      ) : (
+                        <label style={{ cursor: "pointer", color: "var(--accent)" }}>
+                          прикрепить чек/документ
+                          <input
+                            type="file"
+                            accept="image/*,application/pdf"
+                            style={{ display: "none" }}
+                            onChange={(e) => onReceiptFile(idx, e.target.files?.[0])}
+                          />
+                        </label>
+                      )}
+                    </div>
                   )}
                 </td>
                 <td>

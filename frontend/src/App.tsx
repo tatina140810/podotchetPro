@@ -45,6 +45,7 @@ import Transfers from "./pages/Transfers";
 import { SuperPanel } from "./pages/SuperPanel";
 import Workspaces from "./pages/Workspaces";
 import WorkspaceDetail from "./pages/WorkspaceDetail";
+import SupplierAdvances from "./pages/SupplierAdvances";
 
 function ProtectedShell({ children }: { children: React.ReactNode }) {
   const { user, org, logout, loading } = useAuth();
@@ -145,6 +146,7 @@ function RoleRoutes() {
         <Route path="/reports/incomes" element={<IncomeReport />} />
         <Route path="/workspaces" element={<Workspaces />} />
         <Route path="/workspaces/:id" element={<WorkspaceDetail />} />
+        <Route path="/supplier-advances" element={<SupplierAdvances />} />
         <Route path="/issued-topups" element={<IssuedTopups />} />
         <Route path="/admin/bulk-import" element={<BulkImport />} />
         <Route path="/requests" element={<Requests />} />
@@ -172,6 +174,7 @@ function RoleRoutes() {
       <Route path="/requests/new" element={<RequestNew />} />
       <Route path="/requests/:id" element={<RequestDetail />} />
       <Route path="/transfers" element={<Transfers />} />
+      <Route path="/supplier-advances" element={<SupplierAdvances />} />
       <Route path="*" element={<NotFound />} />
     </Routes>
   );

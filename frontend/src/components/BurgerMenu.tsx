@@ -59,6 +59,7 @@ export function BurgerMenu() {
         { to: "/requests", label: "Заявки" },
         { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/expenses", label: "Расходы" },
+        { to: "/supplier-advances", label: "Авансы поставщикам" },
         // «Проектные пространства» — только superadmin и gen_director.
         ...(user.role === "superadmin" || user.role === "gen_director"
           ? [{ to: "/workspaces", label: "Проектные пространства" }]
@@ -93,6 +94,7 @@ export function BurgerMenu() {
         { to: "/", label: "Главная" },
         { to: "/my-expenses", label: "Мои расходы" },
         { to: "/my-history", label: "Моя история" },
+        { to: "/supplier-advances", label: "Авансы поставщикам" },
         { to: "/requests", label: "Заявки" },
         { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/my-subordinates", label: "Мои подотчётные" },

@@ -321,6 +321,17 @@ class Expense(Base):
     is_personal_contribution: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.text("false"), nullable=False
     )
+    # Источник оплаты расхода: 'balance' (с личного подотчётного баланса сотрудника,
+    # прежнее поведение) | 'supplier_advance' (списание с депозита у поставщика —
+    # баланс сотрудника НЕ трогается, т.к. деньги уже списаны при внесении аванса).
+    # Источник строго один — защита от двойного списания.
+    payment_source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="balance", server_default="balance", index=True
+    )
+    # Если payment_source='supplier_advance' — ссылка на депозит, с которого оплачено.
+    supplier_advance_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("supplier_advances.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     spent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -334,6 +345,7 @@ class Expense(Base):
     category: Mapped[Optional[Category]] = relationship()
     advance: Mapped[Optional[Advance]] = relationship()
     department: Mapped[Optional["Department"]] = relationship(foreign_keys=[department_id])
+    supplier_advance: Mapped[Optional["SupplierAdvance"]] = relationship(foreign_keys=[supplier_advance_id])
     # Прикреплённые чеки/документы. Может быть несколько; докладываются даже после
     # проверки расхода (см. routers/expenses.py). cascade — чтобы удалялись с расходом.
     receipts: Mapped[list["ExpenseReceipt"]] = relationship(
@@ -841,3 +853,72 @@ class WorkspaceAuditLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), nullable=False, index=True
     )
+
+
+class SupplierAdvance(Base):
+    """Депозит/предоплата у поставщика (напр. «Строймаг»). Сотрудник вносит аванс —
+    его баланс уменьшается, деньги «лежат» у поставщика. Покупки в этом магазине
+    оплачиваются с депозита (Expense.payment_source='supplier_advance'), не трогая
+    баланс сотрудника повторно. Остаток = Σ deposit − Σ purchase − Σ refund (агрегат
+    по supplier_advance_transactions, денормализованно не храним)."""
+    __tablename__ = "supplier_advances"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # Проектное пространство (если аванс заведён владельцем-участником пространства).
+    # Проставляется СЕРВЕРОМ по владельцу записи, как у Expense/Advance.
+    workspace_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Чей баланс уменьшается при внесении (Мээрим).
+    employee_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False, index=True)
+    supplier_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Сумма ПЕРВОГО внесения (для справки на карточке). Актуальный «внесено» — Σ deposit.
+    initial_amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(
+        String(8), nullable=False, default="KGS", server_default="KGS"
+    )
+    # active (есть остаток) | depleted (остаток 0) | closed (закрыт вручную).
+    status: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="active", server_default="active", index=True
+    )
+    comment: Mapped[Optional[str]] = mapped_column(Text)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    employee: Mapped[User] = relationship(foreign_keys=[employee_id])
+    created_by: Mapped[Optional[User]] = relationship(foreign_keys=[created_by_id])
+    transactions: Mapped[list["SupplierAdvanceTransaction"]] = relationship(
+        "SupplierAdvanceTransaction",
+        cascade="all, delete-orphan",
+        order_by="SupplierAdvanceTransaction.date, SupplierAdvanceTransaction.id",
+    )
+
+
+class SupplierAdvanceTransaction(Base):
+    """Движение по депозиту: deposit (внесение/довнесение, баланс сотрудника −),
+    purchase (списание при покупке, привязано к Expense), refund (возврат остатка,
+    баланс сотрудника +). Знак для остатка: deposit +, purchase −, refund −."""
+    __tablename__ = "supplier_advance_transactions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    advance_id: Mapped[int] = mapped_column(
+        ForeignKey("supplier_advances.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # 'deposit' | 'purchase' | 'refund'
+    type: Mapped[str] = mapped_column(String(20), nullable=False, index=True)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    # Для type='purchase' — ссылка на расход. При удалении расхода транзакция гаснет.
+    expense_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("expenses.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    date: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    created_by_id: Mapped[Optional[int]] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    created_by: Mapped[Optional[User]] = relationship(foreign_keys=[created_by_id])

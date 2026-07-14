@@ -19,6 +19,8 @@ from models import (
     Income,
     MoneyRequest,
     MoneyTransfer,
+    SupplierAdvance,
+    SupplierAdvanceTransaction,
 )
 from services.exchange import fetch_nbkr_rates, get_current_rate
 
@@ -304,16 +306,56 @@ def _expenses_approved(db: Session, org_id: int, user_id: int, rates: dict[str, 
                        end: Optional[datetime] = None) -> Decimal:
     """Конечные расходы юзера (expense_type='expense', approved+pending) в KGS.
     Transfer-Expense (expense_type='transfer') НЕ списывает — у него парный BalanceTopUp
-    у получателя, и списание идёт через _topups_out (admin_id=user). Избегаем double-count."""
+    у получателя, и списание идёт через _topups_out (admin_id=user). Избегаем double-count.
+    Расходы с payment_source='supplier_advance' ТОЖЕ не списывают баланс — деньги уже
+    ушли при внесении аванса (учтено в _supplier_deposits_out). Иначе двойное списание."""
     expr = to_kgs_expr(Expense.amount, Expense.currency, rates)
     q = db.query(func.coalesce(func.sum(expr), 0)).filter(
         Expense.org_id == org_id,
         Expense.employee_id == user_id,
         Expense.status.in_(APPROVED_OR_PENDING),
         Expense.expense_type == "expense",
+        Expense.payment_source == "balance",
     )
     if end:
         q = q.filter(Expense.spent_at < end)
+    return Decimal(str(q.scalar() or 0))
+
+
+def _supplier_deposits_out(db: Session, org_id: int, user_id: int, rates: dict[str, Decimal],
+                           end: Optional[datetime] = None) -> Decimal:
+    """Внесения аванса поставщику (type='deposit') — уменьшают баланс сотрудника.
+    Деньги перемещаются с баланса на депозит у поставщика (не расход, в отчётах нет)."""
+    expr = to_kgs_expr(SupplierAdvanceTransaction.amount, SupplierAdvance.currency, rates)
+    q = (
+        db.query(func.coalesce(func.sum(expr), 0))
+        .join(SupplierAdvance, SupplierAdvance.id == SupplierAdvanceTransaction.advance_id)
+        .filter(
+            SupplierAdvance.org_id == org_id,
+            SupplierAdvance.employee_id == user_id,
+            SupplierAdvanceTransaction.type == "deposit",
+        )
+    )
+    if end:
+        q = q.filter(SupplierAdvanceTransaction.date < end)
+    return Decimal(str(q.scalar() or 0))
+
+
+def _supplier_refunds_in(db: Session, org_id: int, user_id: int, rates: dict[str, Decimal],
+                         end: Optional[datetime] = None) -> Decimal:
+    """Возвраты остатка депозита (type='refund') — возвращаются на баланс сотрудника."""
+    expr = to_kgs_expr(SupplierAdvanceTransaction.amount, SupplierAdvance.currency, rates)
+    q = (
+        db.query(func.coalesce(func.sum(expr), 0))
+        .join(SupplierAdvance, SupplierAdvance.id == SupplierAdvanceTransaction.advance_id)
+        .filter(
+            SupplierAdvance.org_id == org_id,
+            SupplierAdvance.employee_id == user_id,
+            SupplierAdvanceTransaction.type == "refund",
+        )
+    )
+    if end:
+        q = q.filter(SupplierAdvanceTransaction.date < end)
     return Decimal(str(q.scalar() or 0))
 
 
@@ -328,10 +370,12 @@ def compute_current_balance(db: Session, org_id: int, user_id: int,
         + _transfers_in(db, org_id, user_id, end=end)
         + _topups_in(db, org_id, user_id, rates, end=end)
         + _income_in(db, org_id, user_id, rates, end=end)
+        + _supplier_refunds_in(db, org_id, user_id, rates, end=end)
         - _approved_requests_out(db, org_id, user_id, end=end)
         - _transfers_out(db, org_id, user_id, end=end)
         - _topups_out(db, org_id, user_id, rates, end=end)
         - _expenses_approved(db, org_id, user_id, rates, end=end)
+        - _supplier_deposits_out(db, org_id, user_id, rates, end=end)
     )
 
 

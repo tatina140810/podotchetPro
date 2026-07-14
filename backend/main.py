@@ -30,6 +30,7 @@ from routers import (
     settings as settings_router,
     specs,
     super_panel,
+    supplier_advances,
     transfers,
     users,
     workspaces,
@@ -90,5 +91,6 @@ app.include_router(settings_router.router)
 app.include_router(admin_router.router)
 app.include_router(super_panel.router)
 app.include_router(workspaces.router)
+app.include_router(supplier_advances.router)
 
 app.mount("/uploads", StaticFiles(directory=settings.upload_dir), name="uploads")

@@ -365,6 +365,10 @@ class ExpenseCreate(BaseModel):
     # «Расход из личных средств в счёт подразделения»: оплата из личных средств без
     # подотчёта. НЕ создаёт приход — учитывается в агрегате подразделения как приход+расход.
     is_personal_contribution: bool = False
+    # Источник оплаты: 'balance' (баланс сотрудника) | 'supplier_advance' (депозит).
+    payment_source: str = Field(default="balance", pattern="^(balance|supplier_advance)$")
+    # Обязателен при payment_source='supplier_advance' — с какого депозита списать.
+    supplier_advance_id: Optional[int] = None
 
 
 class ExpenseUpdate(BaseModel):
@@ -431,6 +435,9 @@ class ExpenseOut(BaseModel):
     department_id: Optional[int] = None
     workspace_id: Optional[int] = None  # NOT NULL = расход внутри проектного пространства
     is_personal_contribution: bool = False  # расход из личных средств в счёт подразделения
+    payment_source: str = "balance"  # 'balance' | 'supplier_advance'
+    supplier_advance_id: Optional[int] = None
+    supplier_name: Optional[str] = None  # имя поставщика (если оплачено с депозита)
     employee_name: Optional[str] = None
     category_name: Optional[str] = None
     department_name: Optional[str] = None
@@ -1073,6 +1080,73 @@ class WorkspaceCategoryCreate(BaseModel):
     color: Optional[str] = None
     is_operational: bool = False
     parent_id: Optional[int] = None
+
+
+# ===================== SUPPLIER ADVANCES (депозиты у поставщиков) =====================
+
+class SupplierAdvanceCreate(BaseModel):
+    """Первое внесение аванса поставщику: баланс сотрудника уменьшается."""
+    employee_id: Optional[int] = None  # чей баланс (по умолчанию — текущий пользователь)
+    supplier_name: str = Field(..., min_length=1, max_length=200)
+    amount: Decimal = Field(..., gt=0)
+    currency: str = Field(default="KGS", pattern="^(KGS|USD|EUR|RUB)$")
+    date: Optional[datetime] = None
+    comment: Optional[str] = None
+
+
+class SupplierAdvanceDeposit(BaseModel):
+    """Довнесение на существующий депозит."""
+    amount: Decimal = Field(..., gt=0)
+    date: Optional[datetime] = None
+    comment: Optional[str] = None
+
+
+class SupplierAdvanceRefund(BaseModel):
+    """Возврат остатка депозита сотруднику (баланс сотрудника увеличивается)."""
+    amount: Decimal = Field(..., gt=0)
+    date: Optional[datetime] = None
+    comment: Optional[str] = None
+
+
+class SupplierAdvanceTransactionOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    advance_id: int
+    type: str  # deposit | purchase | refund
+    amount: Decimal
+    expense_id: Optional[int] = None
+    date: datetime
+    created_by_id: Optional[int] = None
+    # Обогащение для покупок (из связанного Expense):
+    category_name: Optional[str] = None
+    department_name: Optional[str] = None
+    description: Optional[str] = None
+    receipt_url: Optional[str] = None
+
+
+class SupplierAdvanceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    org_id: int
+    workspace_id: Optional[int] = None
+    employee_id: int
+    supplier_name: str
+    initial_amount: Decimal
+    currency: str = "KGS"
+    status: str  # active | depleted | closed
+    comment: Optional[str] = None
+    created_by_id: Optional[int] = None
+    created_at: datetime
+    updated_at: datetime
+    # Агрегаты (считаются в роутере, не хранятся):
+    deposited: Decimal = Decimal(0)   # Σ deposit
+    spent: Decimal = Decimal(0)       # Σ purchase
+    refunded: Decimal = Decimal(0)    # Σ refund
+    remaining: Decimal = Decimal(0)   # deposited − spent − refunded
+    employee_name: Optional[str] = None
+    transactions: List[SupplierAdvanceTransactionOut] = []
 
 
 # Forward refs

@@ -18,6 +18,7 @@ import { listColleagues } from "../api/users";
 import { listDepartments, type Department } from "../api/departments";
 import { createTransfer } from "../api/transfers";
 import { createIncome } from "../api/income";
+import { listSupplierAdvances, type SupplierAdvance } from "../api/supplierAdvances";
 
 type Kind = "expense" | "income" | "transfer";
 
@@ -33,6 +34,12 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
 
   const [kind, setKind] = useState<Kind>("expense");
   const [cats, setCats] = useState<any[]>([]);
+  // Выбранная родительская категория (для каскада Категория → Подкатегория).
+  const [parentCatId, setParentCatId] = useState<string>("");
+  // Источник оплаты: с баланса (по умолчанию) или с депозита у поставщика.
+  const [advances, setAdvances] = useState<SupplierAdvance[]>([]);
+  const [paySource, setPaySource] = useState<"balance" | "supplier_advance">("balance");
+  const [advanceId, setAdvanceId] = useState<string>("");
   const [spec, setSpec] = useState<any>(null);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -58,6 +65,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     api(`/api/specs/${me.id}`).then(setSpec).catch(() => {});
     api("/api/categories").then(setCats).catch(() => {});
     listColleagues().then(setColleagues).catch(() => {});
+    listSupplierAdvances(true).then(setAdvances).catch(() => {});
     // Подотчётный выбирает только СВОИ подразделения (директор/админ видят все —
     // это уже разруливает бэкенд по роли). Назначить подразделение сотруднику
     // можно в его профиле («Сотрудники» → «Изменить»).
@@ -82,6 +90,18 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     }
     return out;
   }, [cats, allowedIds, form.department_id]);
+  // Каскад: в первом селекте — только корневые категории; во втором (появляется,
+  // если у выбранной есть активные подкатегории) — подкатегории выбранного родителя.
+  const rootCats = useMemo(
+    () => visibleCats.filter((c: any) => !c.parent_id),
+    [visibleCats],
+  );
+  const subCats = useMemo(
+    () => (parentCatId ? visibleCats.filter((c: any) => c.parent_id === Number(parentCatId)) : []),
+    [visibleCats, parentCatId],
+  );
+  const parentCatName = rootCats.find((c: any) => String(c.id) === parentCatId)?.name;
+  const selectedAdvance = advances.find((a) => String(a.id) === advanceId) || null;
   const requiresReceipt = !!spec?.requires_receipt;
 
   function resetForm() {
@@ -97,6 +117,9 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       spent_at: new Date().toISOString().slice(0, 10),
       is_personal_contribution: false,
     });
+    setParentCatId("");
+    setPaySource("balance");
+    setAdvanceId("");
     // onBehalfOf не сбрасываем — admin часто вносит подряд несколько записей за одного
   }
 
@@ -127,6 +150,17 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       toast.show("error", "Выберите подразделение");
       return false;
     }
+    if (paySource === "supplier_advance") {
+      if (!advanceId) {
+        toast.show("error", "Выберите депозит поставщика");
+        return false;
+      }
+      const rem = Number(selectedAdvance?.remaining || 0);
+      if (Number(form.amount) > rem) {
+        toast.show("error", `Сумма больше остатка депозита (${rem.toLocaleString("ru-RU")} ${selectedAdvance?.currency || "KGS"})`);
+        return false;
+      }
+    }
     await api("/api/expenses", {
       method: "POST",
       body: {
@@ -139,6 +173,8 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         spent_at: form.spent_at ? new Date(form.spent_at).toISOString() : null,
         on_behalf_of_user_id: isAdmin && onBehalfOf ? Number(onBehalfOf) : null,
         is_personal_contribution: form.is_personal_contribution,
+        payment_source: paySource,
+        supplier_advance_id: paySource === "supplier_advance" && advanceId ? Number(advanceId) : null,
       },
     });
     const msgPart = onBehalfName ? ` (от лица ${onBehalfName})` : "";
@@ -274,7 +310,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             <label>Подразделение</label>
             <select
               value={form.department_id}
-              onChange={(e) => setForm({ ...form, department_id: e.target.value, category_id: "" })}
+              onChange={(e) => { setParentCatId(""); setForm({ ...form, department_id: e.target.value, category_id: "" }); }}
               required
             >
               <option value="">— выберите —</option>
@@ -309,18 +345,87 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             />
           </div>
         ) : (
+          <>
+            <div>
+              <label>
+                Категория{allowedIds ? " (только разрешённые)" : ""}
+              </label>
+              <select
+                value={parentCatId}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  setParentCatId(pid);
+                  // По умолчанию — сама категория (без подкатегории). Если у неё
+                  // есть подкатегории — можно уточнить во втором селекте ниже.
+                  setForm({ ...form, category_id: pid });
+                }}
+                required
+              >
+                <option value="">— выберите —</option>
+                {rootCats.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+            </div>
+            {subCats.length > 0 && (
+              <div>
+                <label>Подкатегория</label>
+                <select
+                  value={form.category_id}
+                  onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                >
+                  <option value={parentCatId}>— вся «{parentCatName}» —</option>
+                  {subCats.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                </select>
+              </div>
+            )}
+          </>
+        )}
+
+        {kind === "expense" && advances.length > 0 && (
           <div>
-            <label>
-              Категория{allowedIds ? " (только разрешённые)" : ""}
-            </label>
-            <select
-              value={form.category_id}
-              onChange={(e) => setForm({ ...form, category_id: e.target.value })}
-              required
-            >
-              <option value="">— выберите —</option>
-              {visibleCats.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
-            </select>
+            <label>Источник оплаты</label>
+            <div className="row" style={{ gap: 0 }}>
+              <button
+                type="button"
+                className={paySource === "balance" ? "" : "ghost"}
+                onClick={() => { setPaySource("balance"); setAdvanceId(""); }}
+                style={{ flex: 1, borderRadius: "10px 0 0 10px", fontSize: 13 }}
+              >
+                С баланса
+              </button>
+              <button
+                type="button"
+                className={paySource === "supplier_advance" ? "" : "ghost"}
+                onClick={() => setPaySource("supplier_advance")}
+                style={{ flex: 1, borderRadius: "0 10px 10px 0", fontSize: 13 }}
+              >
+                С аванса поставщику
+              </button>
+            </div>
+            {paySource === "supplier_advance" && (
+              <select
+                value={advanceId}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  setAdvanceId(id);
+                  const a = advances.find((x) => String(x.id) === id);
+                  if (a) setForm((s) => ({ ...s, currency: a.currency }));
+                }}
+                required
+                style={{ marginTop: 8 }}
+              >
+                <option value="">— выберите депозит —</option>
+                {advances.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.supplier_name} · остаток {Number(a.remaining).toLocaleString("ru-RU")} {a.currency}
+                  </option>
+                ))}
+              </select>
+            )}
+            {selectedAdvance && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Оплата с депозита не меняет баланс сотрудника. Остаток после покупки: {(Number(selectedAdvance.remaining) - (Number(form.amount) || 0)).toLocaleString("ru-RU")} {selectedAdvance.currency}
+              </div>
+            )}
           </div>
         )}
 

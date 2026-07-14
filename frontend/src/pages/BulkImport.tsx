@@ -38,6 +38,24 @@ interface Row {
 
 interface CategoryOpt { id: number; name: string; display_name?: string | null; parent_id?: number | null }
 
+// Опции категории с группировкой: подкатегории показываются под родителем (optgroup),
+// сам родитель тоже выбираем. Компактно для узких ячеек таблицы импорта.
+function categoryOptions(cats: CategoryOpt[]) {
+  const roots = cats.filter((c) => !c.parent_id);
+  return roots.map((parent) => {
+    const kids = cats.filter((c) => c.parent_id === parent.id);
+    if (kids.length === 0) {
+      return <option key={parent.id} value={parent.id}>{parent.name}</option>;
+    }
+    return (
+      <optgroup key={parent.id} label={parent.name}>
+        <option value={parent.id}>{parent.name} — вся категория</option>
+        {kids.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
+      </optgroup>
+    );
+  });
+}
+
 interface ImportError { index: number; error: string }
 interface ImportResult { created: number; errors: ImportError[] }
 
@@ -315,7 +333,7 @@ export default function BulkImport() {
                       onKeyDown={(e) => onKeyDown(e, idx)}
                     >
                       <option value="">— категория —</option>
-                      {categories.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
+                      {categoryOptions(categories)}
                     </select>
                   )}
                   {r.type === "income" && (
@@ -359,7 +377,7 @@ export default function BulkImport() {
                         title="Категория выдачи (необязательно)"
                       >
                         <option value="">— категория —</option>
-                        {categories.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
+                        {categoryOptions(categories)}
                       </select>
                       <select
                         value={r.issued_by_id}

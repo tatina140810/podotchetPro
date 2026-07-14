@@ -29,6 +29,8 @@ from models import (
     Expense,
     ExpenseReceipt,
     Income,
+    SupplierAdvance,
+    SupplierAdvanceTransaction,
     User,
 )
 from schemas import (
@@ -51,6 +53,7 @@ from services.permissions import (
     workspace_expense_clause,
 )
 from services.plan_limits import ensure_can_export
+from routers.supplier_advances import record_purchase
 
 
 router = APIRouter(prefix="/api/expenses", tags=["expenses"])
@@ -91,6 +94,7 @@ def _to_out(e: Expense) -> ExpenseOut:
     out.recorded_by_name = e.recorded_by.name if e.recorded_by else None
     out.to_user_name = e.to_user.name if e.to_user else None
     out.funded_by_name = e.funded_by.name if e.funded_by else None
+    out.supplier_name = e.supplier_advance.supplier_name if e.supplier_advance else None
     return out
 
 
@@ -307,6 +311,17 @@ def create_expense(
                 "Передавать можно только своим подотчётным (вы — их supervisor)",
             )
 
+    # Оплата с депозита у поставщика: источник строго один — баланс сотрудника НЕ трогается
+    # (уже списан при внесении аванса). Несовместимо с передачей и «личным вкладом».
+    pay_from_advance = payload.payment_source == "supplier_advance"
+    if pay_from_advance:
+        if payload.supplier_advance_id is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите депозит поставщика")
+        if recipient is not None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Передачу нельзя оплатить с депозита")
+        if payload.is_personal_contribution:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "«Личный вклад» несовместим с оплатой с депозита")
+
     # Если в описании не указано про получателя — добавим автоматически.
     description = payload.description or ""
     if recipient and "Передано" not in description:
@@ -355,9 +370,18 @@ def create_expense(
         to_user_id=recipient.id if recipient else None,
         expense_type="transfer" if recipient else "expense",
         is_personal_contribution=payload.is_personal_contribution and recipient is None,
+        payment_source="supplier_advance" if pay_from_advance else "balance",
+        supplier_advance_id=payload.supplier_advance_id if pay_from_advance else None,
         spent_at=payload.spent_at or datetime.utcnow(),
     )
     db.add(e)
+
+    # Списание с депозита поставщика — создаёт purchase-транзакцию (проверяет доступ,
+    # валюту и остаток). Баланс сотрудника при этом не меняется (payment_source исключён
+    # из _expenses_approved). e.id нужен для привязки транзакции → flush.
+    if pay_from_advance:
+        db.flush()
+        record_purchase(db, me, payload.supplier_advance_id, e)
 
     # Чек, прикреплённый при создании, дублируем в expense_receipts (единый источник
     # для галереи). receipt_url оставляем для обратной совместимости.
@@ -442,6 +466,33 @@ def update_expense(
             from decimal import Decimal as _D
             e.amount_kgs = _D(str(e.amount)) * rate
 
+    # Расход оплачен с депозита поставщика и изменилась сумма → синхронизируем
+    # purchase-транзакцию и статус депозита (правило: остаток пересчитывается).
+    if e.payment_source == "supplier_advance" and e.supplier_advance_id and "amount" in data:
+        from decimal import Decimal as _D
+        from routers.supplier_advances import advance_remaining, _refresh_status
+        tx = (
+            db.query(SupplierAdvanceTransaction)
+            .filter(
+                SupplierAdvanceTransaction.expense_id == e.id,
+                SupplierAdvanceTransaction.type == "purchase",
+            )
+            .first()
+        )
+        if tx:
+            # доступный лимит = текущий остаток + сумма этой же покупки (её «вернём» и спишем заново)
+            avail = advance_remaining(db, e.supplier_advance_id) + _D(str(tx.amount))
+            if _D(str(e.amount)) > avail:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Новая сумма покупки больше остатка депозита ({avail})",
+                )
+            tx.amount = e.amount
+            db.flush()
+            adv = db.get(SupplierAdvance, e.supplier_advance_id)
+            if adv:
+                _refresh_status(db, adv)
+
     db.commit()
     db.refresh(e)
     return _to_out(e)
@@ -516,7 +567,16 @@ def delete_expense(expense_id: int, db: Session = Depends(get_db), me: User = De
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     if not is_director_or_auditor(me) and (e.employee_id != me.id or e.status != "pending"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Удалять можно только свои pending-расходы")
+    # Покупка с депозита: запоминаем депозит, чтобы после удаления (FK CASCADE снесёт
+    # purchase-транзакцию) пересчитать статус active/depleted.
+    adv_id = e.supplier_advance_id if e.payment_source == "supplier_advance" else None
     db.delete(e)
+    db.flush()
+    if adv_id:
+        from routers.supplier_advances import _refresh_status
+        adv = db.get(SupplierAdvance, adv_id)
+        if adv:
+            _refresh_status(db, adv)
     db.commit()
     return None
 

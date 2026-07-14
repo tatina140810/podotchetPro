@@ -35,6 +35,7 @@ from schemas import (
     SupplierAdvanceOut,
     SupplierAdvanceRefund,
     SupplierAdvanceTransactionOut,
+    SupplierAdvanceUpdate,
 )
 from services.balance import compute_current_balance
 from services.permissions import (
@@ -231,6 +232,44 @@ def create_advance(
     db.commit()
     db.refresh(adv)
     return _to_out(db, adv, with_tx=True)
+
+
+@router.patch("/{advance_id}", response_model=SupplierAdvanceOut)
+def update_advance(
+    advance_id: int,
+    payload: SupplierAdvanceUpdate,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    adv = _get_visible_or_404(db, me, advance_id)
+    if not _can_manage(me, adv, db):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет прав на этот депозит")
+    if payload.supplier_name is not None:
+        adv.supplier_name = payload.supplier_name.strip()
+    if payload.comment is not None:
+        adv.comment = payload.comment or None
+    db.commit()
+    db.refresh(adv)
+    return _to_out(db, adv, with_tx=True)
+
+
+@router.delete("/{advance_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_advance(advance_id: int, db: Session = Depends(get_db), me: User = Depends(get_current_user)):
+    adv = _get_visible_or_404(db, me, advance_id)
+    if not _can_manage(me, adv, db):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет прав на этот депозит")
+    # Правило: депозит с покупками нельзя удалить (только закрыть) — иначе расходы
+    # осиротеют. Без покупок — удаляем; deposit/refund-транзакции уходят каскадом,
+    # и баланс сотрудника восстанавливается автоматически (агрегатный расчёт).
+    agg = advance_aggregates(db, adv.id)
+    if agg["spent"] > 0:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Нельзя удалить депозит с покупками — верните остаток и закройте его",
+        )
+    db.delete(adv)
+    db.commit()
+    return None
 
 
 @router.post("/{advance_id}/deposit", response_model=SupplierAdvanceOut)

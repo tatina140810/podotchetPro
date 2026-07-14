@@ -76,3 +76,14 @@ export function refundAdvance(
 export function closeAdvance(id: number): Promise<SupplierAdvance> {
   return api<SupplierAdvance>(`/api/supplier-advances/${id}/close`, { method: "POST" });
 }
+
+export function updateSupplierAdvance(
+  id: number,
+  payload: { supplier_name?: string; comment?: string | null },
+): Promise<SupplierAdvance> {
+  return api<SupplierAdvance>(`/api/supplier-advances/${id}`, { method: "PATCH", body: payload });
+}
+
+export function deleteSupplierAdvance(id: number): Promise<void> {
+  return api<void>(`/api/supplier-advances/${id}`, { method: "DELETE" });
+}

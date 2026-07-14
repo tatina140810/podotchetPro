@@ -1094,6 +1094,13 @@ class SupplierAdvanceCreate(BaseModel):
     comment: Optional[str] = None
 
 
+class SupplierAdvanceUpdate(BaseModel):
+    """Редактирование депозита (поставщик/комментарий). Суммы правятся через
+    deposit/refund, не здесь."""
+    supplier_name: Optional[str] = Field(None, min_length=1, max_length=200)
+    comment: Optional[str] = None
+
+
 class SupplierAdvanceDeposit(BaseModel):
     """Довнесение на существующий депозит."""
     amount: Decimal = Field(..., gt=0)

@@ -14,6 +14,8 @@ import {
   depositToAdvance,
   refundAdvance,
   closeAdvance,
+  updateSupplierAdvance,
+  deleteSupplierAdvance,
   type SupplierAdvance,
 } from "../api/supplierAdvances";
 
@@ -103,6 +105,24 @@ export default function SupplierAdvances() {
   async function doClose(a: SupplierAdvance) {
     if (!window.confirm(`Закрыть депозит «${a.supplier_name}»?`)) return;
     try { await closeAdvance(a.id); toast.show("success", "Депозит закрыт"); reload(); }
+    catch (e: any) { toast.show("error", e.message); }
+  }
+
+  async function doEdit(a: SupplierAdvance) {
+    const name = window.prompt("Название поставщика:", a.supplier_name);
+    if (name === null) return;
+    if (!name.trim()) { toast.show("error", "Название не может быть пустым"); return; }
+    try { await updateSupplierAdvance(a.id, { supplier_name: name.trim() }); toast.show("success", "Сохранено"); reload(); }
+    catch (e: any) { toast.show("error", e.message); }
+  }
+
+  async function doDelete(a: SupplierAdvance) {
+    if (Number(a.spent) > 0) {
+      toast.show("error", "Есть покупки — удалить нельзя, верните остаток и закройте депозит");
+      return;
+    }
+    if (!window.confirm(`Удалить депозит «${a.supplier_name}»? Внесённая сумма вернётся на баланс сотрудника.`)) return;
+    try { await deleteSupplierAdvance(a.id); toast.show("success", "Депозит удалён"); reload(); }
     catch (e: any) { toast.show("error", e.message); }
   }
 
@@ -200,17 +220,23 @@ export default function SupplierAdvances() {
                 <div style={{ width: `${pct}%`, height: "100%", background: "var(--accent)" }} />
               </div>
 
-              {canManage && (
-                <div className="row" style={{ gap: 8, marginTop: 10 }}>
+              <div className="row" style={{ gap: 8, marginTop: 10, flexWrap: "wrap" }}>
+                {canManage && (
                   <button type="button" className="ghost" style={{ fontSize: 13 }} onClick={() => doDeposit(a)}>Довнести</button>
-                  {Number(a.remaining) > 0 && (
-                    <button type="button" className="ghost" style={{ fontSize: 13 }} onClick={() => doRefund(a)}>Вернуть остаток</button>
-                  )}
-                  {Number(a.remaining) <= 0 && (
-                    <button type="button" className="ghost" style={{ fontSize: 13 }} onClick={() => doClose(a)}>Закрыть</button>
-                  )}
-                </div>
-              )}
+                )}
+                {canManage && Number(a.remaining) > 0 && (
+                  <button type="button" className="ghost" style={{ fontSize: 13 }} onClick={() => doRefund(a)}>Вернуть остаток</button>
+                )}
+                {canManage && Number(a.remaining) <= 0 && Number(a.spent) > 0 && (
+                  <button type="button" className="ghost" style={{ fontSize: 13 }} onClick={() => doClose(a)}>Закрыть</button>
+                )}
+                {canManage && (
+                  <button type="button" className="ghost" style={{ fontSize: 13 }} onClick={() => doEdit(a)}>Изменить</button>
+                )}
+                {Number(a.spent) === 0 && (
+                  <button type="button" className="ghost" style={{ fontSize: 13, color: "var(--danger, #e74c3c)" }} onClick={() => doDelete(a)}>Удалить</button>
+                )}
+              </div>
 
               {isOpen && (
                 <div style={{ marginTop: 12, borderTop: "1px solid rgba(255,255,255,.08)", paddingTop: 10 }}>

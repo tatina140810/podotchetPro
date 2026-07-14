@@ -28,7 +28,8 @@ interface Row {
   issued_by_id: string;       // только для topup — «кто выдал». Пустое = текущий admin.
   amount: string;
   currency: "KGS" | "USD" | "EUR" | "RUB";
-  category_id: string;        // для expense — id категории; для income/topup игнорируется
+  category_id: string;        // финальный id (подкатегория ИЛИ родитель) — для expense/topup
+  parent_category_id: string; // UI-каскад: выбранная родительская категория
   source: string;             // для income — текстовое поле «Источник» (свободный ввод)
   source_id: string;          // для income — выбор из справочника источников ("" / "manual" / id)
   comment: string;            // комментарий к записи — для всех типов
@@ -38,22 +39,39 @@ interface Row {
 
 interface CategoryOpt { id: number; name: string; display_name?: string | null; parent_id?: number | null }
 
-// Опции категории с группировкой: подкатегории показываются под родителем (optgroup),
-// сам родитель тоже выбираем. Компактно для узких ячеек таблицы импорта.
-function categoryOptions(cats: CategoryOpt[]) {
+// Каскадный выбор категории для ячейки таблицы: селект «Категория» (только корневые),
+// при выборе категории с подкатегориями появляется второй селект. Единообразно с формой
+// расхода и удобнее нативного optgroup (особенно на Windows/сенсоре).
+function CategoryCascade({
+  cats, parentId, categoryId, onChange, onKeyDown,
+}: {
+  cats: CategoryOpt[];
+  parentId: string;
+  categoryId: string;
+  onChange: (patch: { parent_category_id?: string; category_id: string }) => void;
+  onKeyDown?: (e: React.KeyboardEvent) => void;
+}) {
   const roots = cats.filter((c) => !c.parent_id);
-  return roots.map((parent) => {
-    const kids = cats.filter((c) => c.parent_id === parent.id);
-    if (kids.length === 0) {
-      return <option key={parent.id} value={parent.id}>{parent.name}</option>;
-    }
-    return (
-      <optgroup key={parent.id} label={parent.name}>
-        <option value={parent.id}>{parent.name} — вся категория</option>
-        {kids.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
-      </optgroup>
-    );
-  });
+  const subs = parentId ? cats.filter((c) => String(c.parent_id) === parentId) : [];
+  const parentName = roots.find((c) => String(c.id) === parentId)?.name;
+  return (
+    <div className="grid" style={{ gap: 4 }}>
+      <select
+        value={parentId}
+        onChange={(e) => onChange({ parent_category_id: e.target.value, category_id: e.target.value })}
+        onKeyDown={onKeyDown}
+      >
+        <option value="">— категория —</option>
+        {roots.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+      </select>
+      {subs.length > 0 && (
+        <select value={categoryId} onChange={(e) => onChange({ category_id: e.target.value })} onKeyDown={onKeyDown}>
+          <option value={parentId}>вся «{parentName}»</option>
+          {subs.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+      )}
+    </div>
+  );
 }
 
 interface ImportError { index: number; error: string }
@@ -80,6 +98,7 @@ function makeEmptyRow(): Row {
     amount: "",
     currency: "KGS",
     category_id: "",
+    parent_category_id: "",
     source: "",
     source_id: "",
     comment: "",
@@ -327,14 +346,13 @@ export default function BulkImport() {
                 </td>
                 <td>
                   {r.type === "expense" && (
-                    <select
-                      value={r.category_id}
-                      onChange={(e) => updateRow(idx, { category_id: e.target.value })}
+                    <CategoryCascade
+                      cats={categories}
+                      parentId={r.parent_category_id}
+                      categoryId={r.category_id}
+                      onChange={(patch) => updateRow(idx, patch)}
                       onKeyDown={(e) => onKeyDown(e, idx)}
-                    >
-                      <option value="">— категория —</option>
-                      {categoryOptions(categories)}
-                    </select>
+                    />
                   )}
                   {r.type === "income" && (
                     useSourceDirectory ? (
@@ -370,15 +388,13 @@ export default function BulkImport() {
                   )}
                   {r.type === "topup" && (
                     <div className="grid" style={{ gap: 4 }}>
-                      <select
-                        value={r.category_id}
-                        onChange={(e) => updateRow(idx, { category_id: e.target.value })}
+                      <CategoryCascade
+                        cats={categories}
+                        parentId={r.parent_category_id}
+                        categoryId={r.category_id}
+                        onChange={(patch) => updateRow(idx, patch)}
                         onKeyDown={(e) => onKeyDown(e, idx)}
-                        title="Категория выдачи (необязательно)"
-                      >
-                        <option value="">— категория —</option>
-                        {categoryOptions(categories)}
-                      </select>
+                      />
                       <select
                         value={r.issued_by_id}
                         onChange={(e) => updateRow(idx, { issued_by_id: e.target.value })}

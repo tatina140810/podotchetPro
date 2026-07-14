@@ -45,10 +45,14 @@ server {
         access_log off;
     }
 
-    # Загруженные чеки (статика, отдаём через nginx, минуя FastAPI)
+    # Загруженные чеки — проксируем на FastAPI (StaticFiles): файлы лежат под /root,
+    # недоступном nginx (www-data) напрямую, из-за чего alias давал 403.
     location /uploads/ {
-        alias /root/PodotchetPRO/backend/uploads/;
-        autoindex off;
+        proxy_pass http://127.0.0.1:8001;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
         access_log off;
     }
 

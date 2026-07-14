@@ -16,7 +16,7 @@ import {
 } from "../context/AuthContext";
 import { listColleagues } from "../api/users";
 import { listDepartments, type Department } from "../api/departments";
-import { createTransfer } from "../api/transfers";
+import { createTransfer, topupUser } from "../api/transfers";
 import { createIncome } from "../api/income";
 import { listSupplierAdvances, type SupplierAdvance } from "../api/supplierAdvances";
 
@@ -124,6 +124,12 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
   }
 
   const isAdmin = me?.role === "admin" || me?.role === "superadmin";
+  // Кто может «передать с категорией» (через механизм выдачи BalanceTopUp): director-level.
+  // Категория «Подотчёт» (системная) → деньги остаются на балансе получателя; обычная
+  // категория → у получателя сразу авто-расход на неё. Рядовой accountable передаёт
+  // без категории (обычный MoneyTransfer).
+  const canCategorizeTransfer =
+    me?.role === "admin" || me?.role === "superadmin" || me?.role === "gen_director";
   const onBehalfName = onBehalfOf
     ? colleagues.find((c) => c.id === onBehalfOf)?.name
     : null;
@@ -187,12 +193,25 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       toast.show("error", "Выберите получателя");
       return false;
     }
-    await createTransfer({
-      to_user_id: Number(form.transfer_to_user_id),
-      amount: Number(form.amount),
-      currency: form.currency,
-      note: form.description.trim() || null,
-    });
+    if (canCategorizeTransfer) {
+      // Передача через выдачу (BalanceTopUp) с категорией: списывается с баланса
+      // отправителя, зачисляется получателю. «Подотчёт» (системная) → остаётся на его
+      // балансе; обычная категория → авто-расход у получателя на эту категорию.
+      await topupUser(Number(form.transfer_to_user_id), {
+        amount: Number(form.amount),
+        currency: form.currency as "KGS" | "USD" | "EUR" | "RUB",
+        note: form.description.trim() || null,
+        category_id: form.category_id ? Number(form.category_id) : null,
+        issued_by_id: isAdmin && onBehalfOf ? Number(onBehalfOf) : null,
+      });
+    } else {
+      await createTransfer({
+        to_user_id: Number(form.transfer_to_user_id),
+        amount: Number(form.amount),
+        currency: form.currency,
+        note: form.description.trim() || null,
+      });
+    }
     toast.show("success", "Передано");
     return true;
   }
@@ -321,19 +340,55 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
           </div>
         )}
         {kind === "transfer" ? (
-          <div>
-            <label>Кому передать</label>
-            <select
-              value={form.transfer_to_user_id}
-              onChange={(e) => setForm({ ...form, transfer_to_user_id: e.target.value ? Number(e.target.value) : "" })}
-              required
-            >
-              <option value="">— выберите —</option>
-              {recipients.map((u) => (
-                <option key={u.id} value={u.id}>{u.name}</option>
-              ))}
-            </select>
-          </div>
+          <>
+            <div>
+              <label>Кому передать</label>
+              <select
+                value={form.transfer_to_user_id}
+                onChange={(e) => setForm({ ...form, transfer_to_user_id: e.target.value ? Number(e.target.value) : "" })}
+                required
+              >
+                <option value="">— выберите —</option>
+                {recipients.map((u) => (
+                  <option key={u.id} value={u.id}>{u.name}</option>
+                ))}
+              </select>
+            </div>
+            {canCategorizeTransfer && (
+              <>
+                <div>
+                  <label>Категория выдачи</label>
+                  <select
+                    value={parentCatId}
+                    onChange={(e) => {
+                      const pid = e.target.value;
+                      setParentCatId(pid);
+                      setForm({ ...form, category_id: pid });
+                    }}
+                  >
+                    <option value="">— выберите (или «Подотчёт») —</option>
+                    {rootCats.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                {subCats.length > 0 && (
+                  <div>
+                    <label>Подкатегория</label>
+                    <select
+                      value={form.category_id}
+                      onChange={(e) => setForm({ ...form, category_id: e.target.value })}
+                    >
+                      <option value={parentCatId}>— вся «{parentCatName}» —</option>
+                      {subCats.map((c: any) => <option key={c.id} value={c.id}>{c.name}</option>)}
+                    </select>
+                  </div>
+                )}
+                <div className="muted" style={{ fontSize: 12 }}>
+                  Без категории («Подотчёт») деньги остаются на балансе получателя — он сам
+                  разнесёт расходы. С конкретной категорией сумма сразу спишется на неё.
+                </div>
+              </>
+            )}
+          </>
         ) : kind === "income" ? (
           <div>
             <label>Источник прихода</label>

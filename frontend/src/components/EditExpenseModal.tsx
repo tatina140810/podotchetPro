@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { api } from "../api/client";
+import { api, uploadReceipt } from "../api/client";
 import { useToast } from "./Toast";
 import { listDepartments, type Department } from "../api/departments";
 
 interface Category { id: number; name: string }
+interface Receipt { id: number; file_url: string; file_name?: string | null }
 
 interface Props {
   expense: {
@@ -31,11 +32,40 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     spent_at: expense.spent_at ? expense.spent_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
   const [busy, setBusy] = useState(false);
+  const [receipts, setReceipts] = useState<Receipt[]>([]);
+  const [uploading, setUploading] = useState(false);
 
+  function loadReceipts() {
+    api<Receipt[]>(`/api/expenses/${expense.id}/receipts`).then(setReceipts).catch(() => {});
+  }
   useEffect(() => {
     api<Category[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments(true).then(setDepartments).catch(() => {});
+    loadReceipts();
   }, []);
+
+  async function onReceiptFile(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setUploading(true);
+    try {
+      const { url } = await uploadReceipt(f);
+      await api(`/api/expenses/${expense.id}/receipts`, { method: "POST", body: { file_url: url, file_name: f.name } });
+      toast.show("success", "Чек прикреплён");
+      loadReceipts();
+    } catch (err: any) {
+      toast.show("error", err.message);
+    } finally { setUploading(false); }
+  }
+
+  async function removeReceipt(id: number) {
+    try {
+      await api(`/api/expenses/${expense.id}/receipts/${id}`, { method: "DELETE" });
+      loadReceipts();
+    } catch (err: any) {
+      toast.show("error", err.message);
+    }
+  }
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -108,6 +138,25 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
           <div>
             <label>Описание</label>
             <textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+          </div>
+          <div>
+            <label>Чеки / документы</label>
+            {receipts.length > 0 && (
+              <div className="grid" style={{ gap: 4, marginBottom: 6 }}>
+                {receipts.map((r) => (
+                  <div key={r.id} className="row" style={{ justifyContent: "space-between", alignItems: "center", fontSize: 13 }}>
+                    <a href={r.file_url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {r.file_name || "документ"}
+                    </a>
+                    <button type="button" className="ghost" style={{ fontSize: 11, padding: "1px 6px" }} onClick={() => removeReceipt(r.id)}>убрать</button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <label style={{ cursor: "pointer", color: "var(--accent)", fontSize: 13 }}>
+              {uploading ? "загружаю..." : "+ прикрепить чек/документ"}
+              <input type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={onReceiptFile} disabled={uploading} />
+            </label>
           </div>
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <button type="button" className="ghost" onClick={onClose}>Отмена</button>

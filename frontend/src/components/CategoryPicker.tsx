@@ -64,14 +64,26 @@ export function CategoryPicker({ cats, value, onChange, placeholder = "— ка�
         (!subRef.current || !subRef.current.contains(t))
       ) { close(); }
     };
-    const onScrollResize = () => close();
+    const onResize = () => close();
+    // scroll слушаем в фазе перехвата, поэтому сюда прилетает и прокрутка самой панели —
+    // её пропускаем, иначе список категорий закрывается при попытке его прокрутить.
+    const onScroll = (e: Event) => {
+      const t = e.target as Node | null;
+      const inPanel = !!(t && panelRef.current?.contains(t));
+      const inSub = !!(t && subRef.current?.contains(t));
+      if (inPanel || inSub) {
+        if (inPanel) { setHover(null); setHoverRect(null); }  // fly-out привязан к строке — уехал бы
+        return;
+      }
+      close();
+    };
     document.addEventListener("mousedown", onDoc);
-    window.addEventListener("resize", onScrollResize);
-    window.addEventListener("scroll", onScrollResize, true);
+    window.addEventListener("resize", onResize);
+    window.addEventListener("scroll", onScroll, true);
     return () => {
       document.removeEventListener("mousedown", onDoc);
-      window.removeEventListener("resize", onScrollResize);
-      window.removeEventListener("scroll", onScrollResize, true);
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("scroll", onScroll, true);
     };
   }, [open]);
 
@@ -98,6 +110,7 @@ export function CategoryPicker({ cats, value, onChange, placeholder = "— ка�
     position: "fixed", zIndex: 9999,
     background: "#171a2b", border: "1px solid rgba(255,255,255,.14)",
     borderRadius: 10, boxShadow: "0 10px 30px rgba(0,0,0,.55)", padding: 4,
+    overscrollBehavior: "contain",  // докрутив список до конца, не прокручивать страницу под ним
   };
 
   return (

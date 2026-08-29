@@ -31,7 +31,7 @@ from models import (
     User,
 )
 from services.balance import compute_current_balance, load_org_rates
-from services.permissions import hidden_user_ids
+from services.permissions import auditor_visible_user_ids, hidden_user_ids
 from services.plan_limits import ensure_can_export
 
 
@@ -62,6 +62,9 @@ def _load_employee(db: Session, me: User, user_id: int) -> User:
     # Конфиденциальный сотрудник: hidden_user_ids исключает me.id (себя видит всегда),
     # а для admin/auditor вернёт его id → 404.
     if user_id in hidden_user_ids(db, me):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои» (+ себя)
+    if aud_visible is not None and user_id not in aud_visible:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
     return u
 

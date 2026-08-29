@@ -7,7 +7,7 @@
  *   onCancel — опционально, для рендера кнопки «Отмена».
  *   compact — слегка плотнее (для встраивания в страницу).
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, uploadReceipt } from "../api/client";
 import { useToast } from "../components/Toast";
 import {
@@ -57,6 +57,10 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     is_personal_contribution: false,
   });
   const [busy, setBusy] = useState(false);
+  // Синхронный замок от двойной отправки: setBusy(state) применяется не сразу,
+  // и быстрый повторный клик/ре-файр успевает проскочить до пере-рендера кнопки —
+  // тогда создаются два одинаковых расхода (double-submit). Ref срабатывает сразу.
+  const submittingRef = useRef(false);
   const [uploading, setUploading] = useState(false);
 
   useEffect(() => {
@@ -225,10 +229,13 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
+    // Синхронный замок: второй (быстрый) вызов выходит немедленно, ещё до setBusy.
+    if (submittingRef.current) return;
     if (!Number(form.amount) || Number(form.amount) <= 0) {
       toast.show("error", "Введите сумму больше 0");
       return;
     }
+    submittingRef.current = true;
     setBusy(true);
     try {
       const ok =
@@ -241,7 +248,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       }
     } catch (err: any) {
       toast.show("error", err.message);
-    } finally { setBusy(false); }
+    } finally { submittingRef.current = false; setBusy(false); }
   }
 
   return (

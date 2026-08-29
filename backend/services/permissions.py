@@ -12,6 +12,7 @@ from auth import (
 from models import (
     BalanceTopUp,
     Category,
+    EmployeeDepartment,
     Expense,
     Organization,
     ProjectWorkspace,
@@ -179,6 +180,76 @@ def workspace_expense_clause(visible_ids: Optional[set[int]]):
     if visible_ids:
         return or_(Expense.workspace_id.is_(None), Expense.workspace_id.in_(visible_ids))
     return Expense.workspace_id.is_(None)
+
+
+# ===================== Ограничение аудитора по подразделению =====================
+# Аудитор, которому при регистрации назначили подразделение(я) через
+# employee_departments, видит ТОЛЬКО данные своих подразделений (расходы, категории,
+# отчёты и т.д.). Это opt-in: аудитор без назначенных подразделений остаётся
+# общесистемным — как было (обратная совместимость для уже существующих аудиторов).
+# Ограничение действует ТОЛЬКО на роль auditor; admin/gen_director/superadmin всегда
+# видят всю организацию.
+
+
+def auditor_department_ids(db: Session, me: User) -> Optional[set[int]]:
+    """Набор department_id, которым ограничен аудитор, или None.
+
+    - None → ограничения нет (роль не auditor ЛИБО у аудитора нет подразделений);
+    - set  → НЕПУСТОЕ множество department_id, которыми ограничен аудитор.
+    """
+    if me.role != "auditor":
+        return None
+    rows = (
+        db.query(EmployeeDepartment.department_id)
+        .filter(EmployeeDepartment.employee_id == me.id)
+        .all()
+    )
+    ids = {r[0] for r in rows}
+    return ids or None
+
+
+def dept_out_of_scope(scope: Optional[set[int]], department_id: Optional[int]) -> bool:
+    """True, если запись НЕ входит в разрешённый аудитору набор подразделений.
+    Используется для защиты доступа по id (IDOR): scope=None → всегда False."""
+    return scope is not None and department_id not in scope
+
+
+def enforce_report_department(
+    scope: Optional[set[int]], requested: Optional[int]
+) -> Optional[int]:
+    """Эффективный department_id для отчётов с одним подразделением.
+
+    - scope None → requested без изменений (общесистемный доступ);
+    - ограниченный аудитор → requested, если он в scope; иначе первое из scope
+      (аудитор не может запросить чужое подразделение и не может снять фильтр).
+    """
+    if scope is None:
+        return requested
+    if requested is not None and requested in scope:
+        return requested
+    return sorted(scope)[0]
+
+
+def auditor_visible_user_ids(db: Session, me: User) -> Optional[set[int]]:
+    """Множество user_id, которых вправе видеть ограниченный аудитор, или None.
+
+    Ограниченный аудитор видит сотрудников СВОИХ подразделений (членство через
+    employee_departments) + всех, у кого есть расход в его подразделении (чтобы
+    авторы видимых расходов были доступны) + себя. None → ограничения нет."""
+    scope = auditor_department_ids(db, me)
+    if scope is None:
+        return None
+    members = {
+        uid for (uid,) in db.query(EmployeeDepartment.employee_id)
+        .filter(EmployeeDepartment.department_id.in_(scope))
+        .distinct()
+    }
+    spenders = {
+        uid for (uid,) in db.query(Expense.employee_id)
+        .filter(Expense.org_id == me.org_id, Expense.department_id.in_(scope))
+        .distinct()
+    }
+    return members | spenders | {me.id}
 
 
 def masked_workspace_category_ids(db: Session, org_id: int) -> set[int]:

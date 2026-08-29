@@ -21,9 +21,12 @@ from schemas import (
     BalanceTopUpUpdate,
     MoneyTransferCreate,
     MoneyTransferOut,
+    MoneyTransferUpdate,
 )
+from services.audit import log_delete, log_update, snapshot
 from services.balance import compute_current_balance, load_org_rates
 from services.exchange import get_current_rate
+from services.soft_delete import soft_delete
 from services.permissions import (
     member_active_workspace_id,
     owner_isolation_ws_id,
@@ -212,6 +215,131 @@ def create_transfer(
         }),
     )
     return _transfer_to_out(t)
+
+
+def _can_modify_transfer(me: User, t: MoneyTransfer) -> bool:
+    """Править/отменять передачу может только ОТПРАВИТЕЛЬ (или admin/директор).
+    Получатель — нет: иначе он мог бы задним числом изменить полученную сумму."""
+    return me.id == t.from_user_id or is_director_or_auditor(me)
+
+
+@router.patch("/{transfer_id}", response_model=MoneyTransferOut)
+def update_transfer(
+    transfer_id: int,
+    payload: MoneyTransferUpdate,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    t = db.get(MoneyTransfer, transfer_id)  # хук: soft-deleted → None → 404
+    if not t or t.org_id != me.org_id or t.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Передача не найдена")
+    if not _can_modify_transfer(me, t):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Изменить передачу может только отправитель")
+
+    # Курсы грузим ДО мутаций (load_org_rates может коммитить при добивке из НБКР —
+    # не хотим коммитить наполовину применённую правку).
+    rates = load_org_rates(db, t.org_id)
+    before = snapshot(t)
+    data = payload.model_dump(exclude_unset=True)
+    old_to = t.to_user_id
+
+    if data.get("to_user_id") is not None:
+        to_user = db.get(User, data["to_user_id"])
+        if not to_user or to_user.org_id != me.org_id:
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Получатель не найден")
+        if to_user.id == t.from_user_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нельзя передать деньги самому себе")
+        t.to_user_id = to_user.id
+    for f in ("amount", "currency", "note"):
+        if f in data:
+            setattr(t, f, data[f])
+    if "amount" in data or "currency" in data:
+        if t.currency == "KGS":
+            t.amount_kgs = t.amount
+        else:
+            rate = get_current_rate(db, me.org_id, t.currency, "KGS")
+            if rate is None:
+                raise HTTPException(
+                    status.HTTP_400_BAD_REQUEST,
+                    f"Курс {t.currency}/KGS не установлен — пересчёт невозможен",
+                )
+            t.amount_kgs = Decimal(str(t.amount)) * rate
+        rates = load_org_rates(db, t.org_id, [t.currency])
+
+    db.flush()  # применить правку, чтобы баланс считался по новому состоянию
+    # Гвард: баланс затронутых получателей (старого и нового) не должен уйти в минус —
+    # деньги обезличены, отрицательный баланс = «уже потрачены дальше».
+    for uid in {old_to, t.to_user_id}:
+        if compute_current_balance(db, t.org_id, uid, rates=rates) < Decimal("-0.01"):
+            db.rollback()
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                "Нельзя так изменить передачу: у получателя баланс уйдёт в минус "
+                "(эти деньги уже потрачены или переданы дальше). Сначала отмените "
+                "связанные операции получателя.",
+            )
+
+    log_update(db, "transfer", t, before, me)
+    # Уведомляем получателя(ей) об изменении — чтобы сумма не «поехала» незаметно.
+    for uid in {old_to, t.to_user_id}:
+        db.add(Notification(
+            org_id=me.org_id, user_id=uid, type="transfer_updated",
+            payload={"transfer_id": t.id, "from_user_id": t.from_user_id, "amount": str(t.amount)},
+        ))
+    db.commit()
+    db.refresh(t)
+    for uid in {old_to, t.to_user_id}:
+        background_tasks.add_task(
+            send_push_to_user_sync, uid, me.org_id,
+            build_payload("transfer_updated", {"amount": str(t.amount), "from_user_name": me.name}),
+        )
+    return _transfer_to_out(t)
+
+
+@router.delete("/{transfer_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_transfer(
+    transfer_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """Отменить передачу. Откатывает баланс И отправителя, И получателя (в одной
+    транзакции — через soft-delete записи, балансы вычисляются на лету). Только
+    отправитель/admin. Нельзя отменить, если получатель уже потратил эти деньги."""
+    t = db.get(MoneyTransfer, transfer_id)
+    if not t or t.org_id != me.org_id or t.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Передача не найдена")
+    if not _can_modify_transfer(me, t):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Отменить передачу может только отправитель")
+
+    rates = load_org_rates(db, t.org_id)
+    t_kgs = Decimal(str(t.amount_kgs if t.amount_kgs is not None else t.amount))
+    # После отмены баланс получателя уменьшится на t_kgs (входящий перевод исчезнет).
+    balance_after = compute_current_balance(db, t.org_id, t.to_user_id, rates=rates) - t_kgs
+    if balance_after < Decimal("-0.01"):
+        recipient = db.get(User, t.to_user_id)
+        name = recipient.name if recipient else "получатель"
+        shortfall = (-balance_after).quantize(Decimal("1"))
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            f"Нельзя отменить передачу: {name} уже потратил или передал эти деньги "
+            f"дальше (после отмены баланс уйдёт в минус на {shortfall:,} с). "
+            f"Сначала отмените связанные операции получателя.".replace(",", " "),
+        )
+
+    log_delete(db, "transfer", t, me)
+    soft_delete(t, me)
+    db.add(Notification(
+        org_id=me.org_id, user_id=t.to_user_id, type="transfer_cancelled",
+        payload={"transfer_id": t.id, "from_user_id": t.from_user_id, "amount": str(t.amount)},
+    ))
+    db.commit()
+    background_tasks.add_task(
+        send_push_to_user_sync, t.to_user_id, me.org_id,
+        build_payload("transfer_cancelled", {"amount": str(t.amount), "from_user_name": me.name}),
+    )
+    return None
 
 
 # ===================== Topup =====================

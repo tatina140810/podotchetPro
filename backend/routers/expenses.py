@@ -1,7 +1,7 @@
 import io
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from urllib.parse import quote
 
@@ -29,6 +29,7 @@ from models import (
     Expense,
     ExpenseReceipt,
     Income,
+    Notification,
     SupplierAdvance,
     SupplierAdvanceTransaction,
     User,
@@ -42,8 +43,12 @@ from schemas import (
     ExpenseReview,
     ExpenseUpdate,
 )
+from services.audit import log_delete, log_update, snapshot
 from services.exchange import get_current_rate
+from services.soft_delete import soft_delete
 from services.permissions import (
+    auditor_department_ids,
+    dept_out_of_scope,
     hidden_user_ids,
     member_active_workspace_id,
     owner_isolation_ws_id,
@@ -101,6 +106,11 @@ def _workspace_blocked(db: Session, me: User, e: Expense) -> bool:
     return vis is not None and e.workspace_id not in vis
 
 
+def _dept_blocked(db: Session, me: User, e: Expense) -> bool:
+    """True, если расход вне подразделений ограниченного аудитора (защита от IDOR)."""
+    return dept_out_of_scope(auditor_department_ids(db, me), e.department_id)
+
+
 def _to_out(e: Expense) -> ExpenseOut:
     out = ExpenseOut.model_validate(e)
     out.employee_name = e.employee.name if e.employee else None
@@ -132,6 +142,9 @@ def list_expenses(
     if hidden:  # Фича 2: расходы конфиденциальных сотрудников полностью скрыты
         q = q.filter(Expense.employee_id.notin_(hidden))
     q = _apply_workspace_filter(q, db, me)  # детализация чужих пространств скрыта
+    dept_scope = auditor_department_ids(db, me)  # ограниченный аудитор — только своё подразделение
+    if dept_scope is not None:
+        q = q.filter(Expense.department_id.in_(dept_scope))
     if employee_id:
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
@@ -168,6 +181,9 @@ def export_expenses_xlsx(
     if hidden:  # Фича 2: расходы конфиденциальных сотрудников скрыты и в экспорте
         q = q.filter(Expense.employee_id.notin_(hidden))
     q = _apply_workspace_filter(q, db, me)  # детализация чужих пространств скрыта и в экспорте
+    dept_scope = auditor_department_ids(db, me)  # ограниченный аудитор — только своё подразделение
+    if dept_scope is not None:
+        q = q.filter(Expense.department_id.in_(dept_scope))
     if employee_id:
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
@@ -203,6 +219,23 @@ def export_expenses_xlsx(
             _STATUS_RU.get(e.status, e.status or ""),
             e.review_comment or "",
         ])
+
+    # Подытоги по каждой валюте. Единого SUM по колонке «Сумма» нет намеренно:
+    # в выгрузке валюты смешаны (KGS/USD/EUR/RUB) и складывать их вместе некорректно.
+    # Пустая строка-разделитель, затем по строке «ИТОГО» на каждую валюту.
+    totals: dict = {}
+    for e in rows:
+        if e.amount is None:
+            continue
+        cur = e.currency or ""
+        totals[cur] = totals.get(cur, 0.0) + float(e.amount)
+    if totals:
+        ws.append([])  # разделитель
+        total_font = Font(bold=True)
+        for cur, tot in sorted(totals.items()):
+            ws.append(["", "", "ИТОГО", tot, cur, "", "", ""])
+            for cell in ws[ws.max_row]:
+                cell.font = total_font
 
     widths = [12, 22, 20, 14, 8, 40, 14, 30]
     for i, w in enumerate(widths, start=1):
@@ -364,6 +397,36 @@ def create_expense(
         or (spec is not None and not spec.requires_approval)
     )
     employee_id = on_behalf.id if on_behalf else me.id
+
+    # Идемпотентность / защита от двойной отправки. Двойной POST (двойной клик,
+    # ре-сабмит формы) шлёт тот же payload → создаются два одинаковых расхода.
+    # Если за последние 5 секунд уже есть идентичная живая запись того же сотрудника —
+    # возвращаем её, а не плодим дубль (и не дублируем побочные эффекты transfer'а).
+    # spent_at в сравнение НЕ берём: при пустой дате он = utcnow() и отличается на мс.
+    dup_since = datetime.utcnow() - timedelta(seconds=5)
+    dup = (
+        db.query(Expense)
+        .filter(
+            Expense.org_id == me.org_id,
+            Expense.employee_id == employee_id,
+            Expense.deleted_at.is_(None),
+            Expense.amount == payload.amount,
+            Expense.currency == payload.currency,
+            Expense.category_id == payload.category_id,
+            Expense.department_id == department_id,
+            Expense.description == (description or None),
+            Expense.expense_type == ("transfer" if recipient else "expense"),
+            Expense.to_user_id == (recipient.id if recipient else None),
+            Expense.payment_source == ("supplier_advance" if pay_from_advance else "balance"),
+            Expense.is_personal_contribution == (payload.is_personal_contribution and recipient is None),
+            Expense.created_at >= dup_since,
+        )
+        .order_by(Expense.id.desc())
+        .first()
+    )
+    if dup is not None:
+        return _to_out(dup)
+
     # Проектное пространство определяет СЕРВЕР по записи (клиенту не доверяем):
     # если сотрудник — УЧАСТНИК активного пространства (владелец или подотчётный),
     # расход уходит в это пространство.
@@ -443,37 +506,43 @@ def get_expense(expense_id: int, db: Session = Depends(get_db), me: User = Depen
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     if _workspace_blocked(db, me, e):  # детализация чужого пространства
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     return _to_out(e)
 
 
-@router.patch("/{expense_id}", response_model=ExpenseOut)
-def update_expense(
-    expense_id: int,
-    payload: ExpenseUpdate,
-    db: Session = Depends(get_db),
-    me: User = Depends(get_current_user),
-):
-    e = db.get(Expense, expense_id)
-    if not e or e.org_id != me.org_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
-    if not is_director_or_auditor(me) and (e.employee_id != me.id or e.status != "pending"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Менять можно только свои pending-расходы")
+def _can_modify_expense(me: User, e: Expense) -> bool:
+    """Кто может править/удалять расход.
+    - Привилегированные роли (admin/superadmin/gen_director/auditor) — любой статус
+      (отдельная ветка прав, не смешивается с сотрудничьей).
+    - Сотрудник — только СВОЙ расход в статусе pending или rejected (rejected
+      правит и переотправляет; approved заблокирован → 403)."""
+    if is_director_or_auditor(me):
+        return True
+    return e.employee_id == me.id and e.status in ("pending", "rejected")
 
-    data = payload.model_dump(exclude_unset=True)
+
+def _apply_expense_fields(db: Session, e: Expense, data: dict, me: User) -> None:
+    """Применить изменённые поля расхода + пересчёт amount_kgs + синхронизация
+    депозита. Без проверки прав и статус-логики (их делает вызывающий)."""
     if data.get("department_id") is not None:
         dep = db.get(Department, data["department_id"])
         if not dep or dep.org_id != me.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+    if data.get("is_personal_contribution") and e.expense_type == "transfer":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Передача не может быть личным вкладом")
+
     for field, value in data.items():
         setattr(e, field, value)
 
-    # Если изменилась amount или currency — пересчитать KGS-эквивалент по ТЕКУЩЕМУ курсу.
+    # amount/currency → пересчёт KGS-эквивалента по ТЕКУЩЕМУ курсу (действующая модель:
+    # живой курс; при смене только суммы валюта та же — курс не меняется, меняется
+    # amount_kgs = amount × курс_той_же_валюты). Ретроактивного пересчёта соседей нет.
     if "amount" in data or "currency" in data:
         if e.currency == "KGS":
             e.amount_kgs = e.amount
         else:
-            from services.exchange import get_current_rate as _rate
-            rate = _rate(db, me.org_id, e.currency, "KGS")
+            rate = get_current_rate(db, me.org_id, e.currency, "KGS")
             if rate is None:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
@@ -482,8 +551,7 @@ def update_expense(
             from decimal import Decimal as _D
             e.amount_kgs = _D(str(e.amount)) * rate
 
-    # Расход оплачен с депозита поставщика и изменилась сумма → синхронизируем
-    # purchase-транзакцию и статус депозита (правило: остаток пересчитывается).
+    # Оплата с депозита + смена суммы → синхронизировать purchase-транзакцию/статус.
     if e.payment_source == "supplier_advance" and e.supplier_advance_id and "amount" in data:
         from decimal import Decimal as _D
         from routers.supplier_advances import advance_remaining, _refresh_status
@@ -509,6 +577,43 @@ def update_expense(
             if adv:
                 _refresh_status(db, adv)
 
+
+@router.patch("/{expense_id}", response_model=ExpenseOut)
+def update_expense(
+    expense_id: int,
+    payload: ExpenseUpdate,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    e = db.get(Expense, expense_id)  # хук исключает soft-deleted → None → 404
+    if not e or e.org_id != me.org_id or e.deleted_at is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _workspace_blocked(db, me, e):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if not _can_modify_expense(me, e):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Менять можно только свои pending/rejected-расходы")
+
+    before = snapshot(e)
+    data = payload.model_dump(exclude_unset=True)
+    _apply_expense_fields(db, e, data, me)
+
+    # Сотрудник исправил ОТКЛОНЁННЫЙ расход → возвращаем на проверку. review_comment
+    # (причину отклонения) НЕ стираем — она остаётся в истории записи (change-log
+    # фиксирует переход статуса). Проверяющему — уведомление об исправлении.
+    if not is_director_or_auditor(me) and e.status == "rejected":
+        e.status = "pending"
+        if e.reviewed_by_id:
+            db.add(Notification(
+                org_id=me.org_id,
+                user_id=e.reviewed_by_id,
+                type="expense_resubmitted",
+                payload={"expense_id": e.id, "employee_id": me.id, "amount": str(e.amount)},
+            ))
+
+    db.flush()
+    log_update(db, "expense", e, before, me)
     db.commit()
     db.refresh(e)
     return _to_out(e)
@@ -526,15 +631,21 @@ def toggle_personal_contribution(
     считается одновременно приходом и расходом). Личный баланс сотрудника и его
     приходы не трогаются. Позволяет руками проставлять вклады из детализации."""
     e = db.get(Expense, expense_id)
-    if not e or e.org_id != me.org_id:
+    if not e or e.org_id != me.org_id or e.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     if _workspace_blocked(db, me, e):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     if not is_director_or_auditor(me) and e.employee_id != me.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
     if e.expense_type == "transfer":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Передача не может быть личным вкладом")
-    e.is_personal_contribution = bool(payload.enabled)
+    # Тонкая обёртка над общей логикой правки — то же применение поля + аудит.
+    before = snapshot(e)
+    _apply_expense_fields(db, e, {"is_personal_contribution": bool(payload.enabled)}, me)
+    db.flush()
+    log_update(db, "expense", e, before, me)
     db.commit()
     db.refresh(e)
     return _to_out(e)
@@ -569,6 +680,8 @@ def verify_expense(
     e = db.get(Expense, expense_id)
     if not e or e.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # аудитор не верифицирует чужое подразделение
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     e.is_verified = True
     e.verified_by_id = me.id
     db.commit()
@@ -578,21 +691,58 @@ def verify_expense(
 
 @router.delete("/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_expense(expense_id: int, db: Session = Depends(get_db), me: User = Depends(get_current_user)):
-    e = db.get(Expense, expense_id)
-    if not e or e.org_id != me.org_id:
+    e = db.get(Expense, expense_id)  # хук: soft-deleted → None → 404 (защита от двойного удаления)
+    if not e or e.org_id != me.org_id or e.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
-    if not is_director_or_auditor(me) and (e.employee_id != me.id or e.status != "pending"):
-        raise HTTPException(status.HTTP_403_FORBIDDEN, "Удалять можно только свои pending-расходы")
-    # Покупка с депозита: запоминаем депозит, чтобы после удаления (FK CASCADE снесёт
-    # purchase-транзакцию) пересчитать статус active/depleted.
-    adv_id = e.supplier_advance_id if e.payment_source == "supplier_advance" else None
-    db.delete(e)
-    db.flush()
-    if adv_id:
+    if _workspace_blocked(db, me, e):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if not _can_modify_expense(me, e):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Удалять можно только свои pending/rejected-расходы")
+
+    # Аудит — полный снимок ДО пометки удалённым (для восстановимости).
+    log_delete(db, "expense", e, me)
+
+    # Побочные эффекты (CASCADE больше не срабатывает при soft-delete — делаем явно):
+    # 1) покупка с депозита → гасим purchase-транзакцию и пересчитываем статус депозита
+    #    (остаток возвращается на депозит).
+    if e.payment_source == "supplier_advance" and e.supplier_advance_id:
+        tx = (
+            db.query(SupplierAdvanceTransaction)
+            .filter(
+                SupplierAdvanceTransaction.expense_id == e.id,
+                SupplierAdvanceTransaction.type == "purchase",
+            )
+            .first()
+        )
+        if tx:
+            db.delete(tx)
+        db.flush()
         from routers.supplier_advances import _refresh_status
-        adv = db.get(SupplierAdvance, adv_id)
+        adv = db.get(SupplierAdvance, e.supplier_advance_id)
         if adv:
             _refresh_status(db, adv)
+    # 2) расход-передача → снять парный BalanceTopUp получателя, иначе он осиротеет и
+    #    завысит баланс получателя (существующий баг hard-delete — чиним здесь).
+    if e.expense_type == "transfer" and e.to_user_id:
+        pair = (
+            db.query(BalanceTopUp)
+            .filter(
+                BalanceTopUp.org_id == e.org_id,
+                BalanceTopUp.admin_id == e.employee_id,
+                BalanceTopUp.user_id == e.to_user_id,
+                BalanceTopUp.amount == e.amount,
+                BalanceTopUp.currency == e.currency,
+                BalanceTopUp.note.like("Из расхода:%"),
+            )
+            .order_by(BalanceTopUp.id.desc())
+            .first()
+        )
+        if pair:
+            soft_delete(pair, me)
+
+    soft_delete(e, me)
     db.commit()
     return None
 
@@ -613,6 +763,8 @@ def _load_expense_visible(db: Session, me: User, expense_id: int) -> Expense:
     if e.employee_id in hidden_user_ids(db, me):  # Фича 2
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     if _workspace_blocked(db, me, e):  # детализация чужого пространства
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     return e
 
@@ -640,6 +792,8 @@ def add_receipt(
     e = db.get(Expense, expense_id)
     if not e or e.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     if not is_director_level(me) and e.employee_id != me.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Прикреплять чеки можно только к своим расходам")
     r = ExpenseReceipt(
@@ -666,6 +820,8 @@ def delete_receipt(
     после проверки чеки только добавляются (чтобы нельзя было подменить)."""
     e = db.get(Expense, expense_id)
     if not e or e.org_id != me.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    if _dept_blocked(db, me, e):  # чужое подразделение (ограниченный аудитор)
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
     r = db.get(ExpenseReceipt, receipt_id)
     if not r or r.expense_id != e.id:

@@ -46,6 +46,22 @@ export function createTransfer(payload: {
   return api<MoneyTransfer>("/api/transfers", { method: "POST", body: payload });
 }
 
+export function updateTransfer(
+  id: number,
+  payload: Partial<{
+    to_user_id: number;
+    amount: number | string;
+    currency: "KGS" | "USD" | "EUR" | "RUB";
+    note: string | null;
+  }>
+): Promise<MoneyTransfer> {
+  return api<MoneyTransfer>(`/api/transfers/${id}`, { method: "PATCH", body: payload });
+}
+
+export function deleteTransfer(id: number): Promise<void> {
+  return api<void>(`/api/transfers/${id}`, { method: "DELETE" });
+}
+
 export function topupUser(
   userId: number,
   payload: {

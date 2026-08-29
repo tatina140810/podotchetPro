@@ -27,6 +27,13 @@ export function listIncomes(params: {
   return api<Income[]>(`/api/income${q ? `?${q}` : ""}`);
 }
 
+/** Свои приходы (received_by == me) для блока «История» на /my-expenses.
+ * created_by_id === me.id → свой ручной (можно править/удалять);
+ * created_by_id !== me.id → внесён другим (read-only). */
+export function listMyIncomes(): Promise<Income[]> {
+  return api<Income[]>("/api/income/mine");
+}
+
 export function createIncome(payload: {
   amount: number | string;
   currency: "KGS" | "USD" | "EUR" | "RUB";

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from auth import (
     get_current_user,
     is_director_level,
+    is_director_or_auditor,
     require_admin,
     require_director_level,
     require_director_or_auditor,
@@ -17,8 +18,10 @@ from auth import (
 from database import get_db
 from models import Income, IncomeSource, User
 from schemas import IncomeCreate, IncomeOut, IncomeUpdate
+from services.audit import log_delete, log_update, snapshot
 from services.exchange import get_current_rate
-from services.permissions import hidden_user_ids
+from services.permissions import auditor_department_ids, hidden_user_ids
+from services.soft_delete import soft_delete
 
 
 router = APIRouter(prefix="/api/income", tags=["income"])
@@ -119,6 +122,9 @@ def list_incomes(
     hidden = hidden_user_ids(db, me)
     if hidden:
         q = q.filter(Income.received_by_id.notin_(hidden))
+    dept_scope = auditor_department_ids(db, me)  # ограниченный аудитор — только своё подразделение
+    if dept_scope is not None:
+        q = q.filter(Income.department_id.in_(dept_scope))
     if date_from:
         q = q.filter(Income.date >= date_from)
     if date_to:
@@ -127,20 +133,55 @@ def list_incomes(
     return [_to_out(r) for r in rows]
 
 
+@router.get("/mine", response_model=List[IncomeOut])
+def list_my_incomes(
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """Свои приходы (received_by_id == me) — для блока «История» на /my-expenses.
+    Роль accountable не имеет доступа к общему GET /api/income (только директор).
+    В IncomeOut отдаётся created_by_id — фронт по нему различает: свой ручной приход
+    (created_by == me → можно править/удалять) vs внесённый другим (read-only)."""
+    rows = (
+        db.query(Income)
+        .filter(Income.org_id == me.org_id, Income.received_by_id == me.id)
+        .order_by(Income.date.desc())
+        .limit(500)
+        .all()
+    )
+    return [_to_out(r) for r in rows]
+
+
+def _ensure_can_modify_income(db: Session, me: User, inc: Income) -> None:
+    """Права на правку/удаление прихода.
+    - Привилегированные (admin/superadmin/gen_director/auditor) — любой приход, кроме
+      конфиденциального без доступа.
+    - Сотрудник — только СВОЙ РУЧНОЙ приход (created_by == me). Приход, внесённый
+      другим (created_by != me) — 403: нельзя тихо удалить полученную/выданную сумму."""
+    if is_director_or_auditor(me):
+        if inc.received_by_id in hidden_user_ids(db, me):  # Фича 2
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
+        return
+    if inc.created_by_id != me.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Редактировать можно только свои приходы (внесённые вами)",
+        )
+
+
 @router.delete("/{income_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_income(
     income_id: int,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_director_or_auditor),
+    me: User = Depends(get_current_user),
 ):
-    """Удалить — auditor и выше (admin/superadmin/gen_director)."""
-    inc = db.get(Income, income_id)
-    if not inc or inc.org_id != admin.org_id:
+    """Удалить приход. Сотрудник — только свой ручной; admin/auditor — любой."""
+    inc = db.get(Income, income_id)  # хук: soft-deleted → None → 404
+    if not inc or inc.org_id != me.org_id or inc.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
-    # Фича 2: нельзя трогать приход конфиденциального сотрудника без прав на него.
-    if inc.received_by_id in hidden_user_ids(db, admin):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
-    db.delete(inc)
+    _ensure_can_modify_income(db, me, inc)
+    log_delete(db, "income", inc, me)
+    soft_delete(inc, me)
     db.commit()
     return None
 
@@ -150,23 +191,26 @@ def update_income(
     income_id: int,
     payload: IncomeUpdate,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_director_or_auditor),
+    me: User = Depends(get_current_user),
 ):
-    """Изменить запись прихода — только admin.
+    """Изменить приход. Сотрудник — только свой ручной; admin/auditor — любой.
     При изменении amount/currency пересчитываем amount_kgs по ТЕКУЩЕМУ курсу.
     """
     inc = db.get(Income, income_id)
-    if not inc or inc.org_id != admin.org_id:
+    if not inc or inc.org_id != me.org_id or inc.deleted_at is not None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
-    # Фича 2: нельзя редактировать приход конфиденциального сотрудника без прав.
-    if inc.received_by_id in hidden_user_ids(db, admin):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Приход не найден")
+    _ensure_can_modify_income(db, me, inc)
 
+    before = snapshot(inc)
     data = payload.model_dump(exclude_unset=True)
 
+    # Сотрудник не может переназначить получателя своего прихода (увести сумму другому) —
+    # менять received_by_id разрешено только привилегированным ролям.
+    if "received_by_id" in data and not is_director_or_auditor(me):
+        data.pop("received_by_id")
     if "received_by_id" in data and data["received_by_id"] is not None:
         receiver = db.get(User, data["received_by_id"])
-        if not receiver or receiver.org_id != admin.org_id:
+        if not receiver or receiver.org_id != me.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Получатель не найден")
         inc.received_by_id = data["received_by_id"]
 
@@ -175,7 +219,7 @@ def update_income(
     if "source_id" in data:
         if data["source_id"] is not None:
             src = db.get(IncomeSource, data["source_id"])
-            if not src or src.org_id != admin.org_id:
+            if not src or src.org_id != me.org_id:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Источник не найден")
             inc.source_id = src.id
             inc.source = src.name
@@ -196,7 +240,7 @@ def update_income(
         if new_currency == "KGS":
             inc.amount_kgs = new_amount
         else:
-            rate = get_current_rate(db, admin.org_id, new_currency, "KGS")
+            rate = get_current_rate(db, me.org_id, new_currency, "KGS")
             if rate is None:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
@@ -207,6 +251,8 @@ def update_income(
         inc.amount = new_amount
         inc.currency = new_currency
 
+    db.flush()
+    log_update(db, "income", inc, before, me)
     db.commit()
     db.refresh(inc)
     return _to_out(inc)

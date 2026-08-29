@@ -379,6 +379,10 @@ class ExpenseUpdate(BaseModel):
     description: Optional[str] = None
     receipt_url: Optional[str] = None
     spent_at: Optional[datetime] = None
+    # Флаг «расход из личных средств в счёт подразделения». Втянут в PATCH, чтобы его
+    # изменение шло через единую логику и попадало в аудит (влияет на баланс
+    # подразделения). Старый эндпоинт /personal-contribution — тонкая обёртка над этим.
+    is_personal_contribution: Optional[bool] = None
 
 
 class ExpenseReview(BaseModel):
@@ -658,6 +662,15 @@ class MoneyTransferCreate(BaseModel):
     to_user_id: int
     amount: Decimal = Field(..., gt=0)
     currency: str = Field(default="KGS", pattern=CURRENCY_PATTERN)
+    note: Optional[str] = Field(default=None, max_length=500)
+
+
+class MoneyTransferUpdate(BaseModel):
+    """Правка передачи. Все поля опциональны. У MoneyTransfer нет отдельной
+    бизнес-даты (только created_at), поэтому дату не редактируем."""
+    to_user_id: Optional[int] = None
+    amount: Optional[Decimal] = Field(default=None, gt=0)
+    currency: Optional[str] = Field(default=None, pattern=CURRENCY_PATTERN)
     note: Optional[str] = Field(default=None, max_length=500)
 
 

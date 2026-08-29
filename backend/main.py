@@ -7,6 +7,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import get_settings
 from database import Base, engine
+import services.soft_delete  # noqa: F401  — регистрирует глобальный хук soft-delete (do_orm_execute)
 from routers import (
     admin as admin_router,
     auth,

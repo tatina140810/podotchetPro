@@ -33,6 +33,8 @@ from schemas import (
 )
 from services.push_service import build_payload, send_push_to_user_sync
 from services.permissions import (
+    auditor_department_ids,
+    dept_out_of_scope,
     member_active_workspace_id,
     owner_isolation_ws_id,
     workspace_member_ids,
@@ -162,6 +164,9 @@ def list_requests(
                 MoneyRequest.approver_id == me.id,
             )
         )
+    dept_scope = auditor_department_ids(db, me)  # ограниченный аудитор — только своё подразделение
+    if dept_scope is not None:
+        q = q.filter(MoneyRequest.department_id.in_(dept_scope))
     if status_filter:
         q = q.filter(MoneyRequest.status == status_filter)
     if date_from:
@@ -179,6 +184,8 @@ def get_request(request_id: int, db: Session = Depends(get_db), me: User = Depen
     if not req or req.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
     _check_visible(req, me)
+    if dept_out_of_scope(auditor_department_ids(db, me), req.department_id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
     return _to_out(req)
 
 

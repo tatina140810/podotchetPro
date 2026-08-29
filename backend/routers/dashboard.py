@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, is_director_or_auditor, is_director_level
@@ -15,8 +15,10 @@ from models import (
     Expense,
     Income,
     MoneyRequest,
+    MoneyTransfer,
     User,
 )
+from services.permissions import auditor_department_ids
 from services.balance import (
     compute_current_balance,
     compute_total_issued,
@@ -44,23 +46,31 @@ def _director_dashboard(db: Session, me: User) -> dict:
     rates = load_org_rates(db, me.org_id)
     usd_kgs = rates.get("USD")
 
-    total_issued = Decimal(str(
-        db.query(func.coalesce(func.sum(Advance.amount), 0))
-        .filter(Advance.org_id == me.org_id).scalar() or 0
-    ))
+    # Ограниченный аудитор видит цифры только своего подразделения. Выдачи/авансы
+    # (Advance) к подразделению не привязаны — для него они = 0.
+    dept_scope = auditor_department_ids(db, me)
+
+    if dept_scope is not None:
+        total_issued = Decimal(0)
+    else:
+        total_issued = Decimal(str(
+            db.query(func.coalesce(func.sum(Advance.amount), 0))
+            .filter(Advance.org_id == me.org_id).scalar() or 0
+        ))
     # Все расходы в KGS-эквиваленте по ТЕКУЩЕМУ курсу.
     expense_expr = to_kgs_expr(Expense.amount, Expense.currency, rates)
-    total_spent = Decimal(str(
-        db.query(func.coalesce(func.sum(expense_expr), 0))
-        .filter(
-            Expense.org_id == me.org_id,
-            Expense.status.in_(("approved", "pending")),
-        ).scalar() or 0
-    ))
-    pending_expenses = (
-        db.query(func.count(Expense.id))
-        .filter(Expense.org_id == me.org_id, Expense.status == "pending").scalar() or 0
+    spent_q = db.query(func.coalesce(func.sum(expense_expr), 0)).filter(
+        Expense.org_id == me.org_id,
+        Expense.status.in_(("approved", "pending")),
     )
+    pending_q = db.query(func.count(Expense.id)).filter(
+        Expense.org_id == me.org_id, Expense.status == "pending",
+    )
+    if dept_scope is not None:
+        spent_q = spent_q.filter(Expense.department_id.in_(dept_scope))
+        pending_q = pending_q.filter(Expense.department_id.in_(dept_scope))
+    total_spent = Decimal(str(spent_q.scalar() or 0))
+    pending_expenses = pending_q.scalar() or 0
     pending_requests_for_me = (
         db.query(func.count(MoneyRequest.id))
         .filter(
@@ -70,20 +80,23 @@ def _director_dashboard(db: Session, me: User) -> dict:
         )
         .scalar() or 0
     )
-    pending_requests_total = (
-        db.query(func.count(MoneyRequest.id))
-        .filter(MoneyRequest.org_id == me.org_id, MoneyRequest.status == "pending")
-        .scalar() or 0
+    pending_requests_total_q = db.query(func.count(MoneyRequest.id)).filter(
+        MoneyRequest.org_id == me.org_id, MoneyRequest.status == "pending",
     )
+    if dept_scope is not None:
+        pending_requests_total_q = pending_requests_total_q.filter(
+            MoneyRequest.department_id.in_(dept_scope))
+    pending_requests_total = pending_requests_total_q.scalar() or 0
 
-    last_advances = (
+    # Выдачи к подразделению не привязаны → ограниченному аудитору их не показываем.
+    last_advances = [] if dept_scope is not None else (
         db.query(Advance).filter(Advance.org_id == me.org_id)
         .order_by(Advance.issued_at.desc()).limit(5).all()
     )
-    last_expenses = (
-        db.query(Expense).filter(Expense.org_id == me.org_id)
-        .order_by(Expense.spent_at.desc()).limit(5).all()
-    )
+    last_expenses_q = db.query(Expense).filter(Expense.org_id == me.org_id)
+    if dept_scope is not None:
+        last_expenses_q = last_expenses_q.filter(Expense.department_id.in_(dept_scope))
+    last_expenses = last_expenses_q.order_by(Expense.spent_at.desc()).limit(5).all()
 
     my_issued = (
         compute_total_issued(db, me.org_id, me.id, rates=rates) if is_director_level(me) else 0
@@ -92,24 +105,21 @@ def _director_dashboard(db: Session, me: User) -> dict:
     # Остаток в обороте org = Income + TopUp − Expense (все в KGS по текущему курсу).
     topup_expr = to_kgs_expr(BalanceTopUp.amount, BalanceTopUp.currency, rates)
     income_expr = to_kgs_expr(Income.amount, Income.currency, rates)
-    total_topups_kgs = Decimal(str(
-        db.query(func.coalesce(func.sum(topup_expr), 0))
-        .filter(BalanceTopUp.org_id == me.org_id)
-        .scalar() or 0
-    ))
-    total_income_kgs = Decimal(str(
-        db.query(func.coalesce(func.sum(income_expr), 0))
-        .filter(Income.org_id == me.org_id)
-        .scalar() or 0
-    ))
-    spent_kgs = Decimal(str(
-        db.query(func.coalesce(func.sum(expense_expr), 0))
-        .filter(
-            Expense.org_id == me.org_id,
-            Expense.status.in_(("approved", "pending")),
-        )
-        .scalar() or 0
-    ))
+    topups_q = db.query(func.coalesce(func.sum(topup_expr), 0)).filter(
+        BalanceTopUp.org_id == me.org_id)
+    income_q = db.query(func.coalesce(func.sum(income_expr), 0)).filter(
+        Income.org_id == me.org_id)
+    cash_spent_q = db.query(func.coalesce(func.sum(expense_expr), 0)).filter(
+        Expense.org_id == me.org_id,
+        Expense.status.in_(("approved", "pending")),
+    )
+    if dept_scope is not None:
+        topups_q = topups_q.filter(BalanceTopUp.department_id.in_(dept_scope))
+        income_q = income_q.filter(Income.department_id.in_(dept_scope))
+        cash_spent_q = cash_spent_q.filter(Expense.department_id.in_(dept_scope))
+    total_topups_kgs = Decimal(str(topups_q.scalar() or 0))
+    total_income_kgs = Decimal(str(income_q.scalar() or 0))
+    spent_kgs = Decimal(str(cash_spent_q.scalar() or 0))
     cash_kgs = total_topups_kgs + total_income_kgs - spent_kgs
     cash_usd = (cash_kgs / usd_kgs) if usd_kgs and usd_kgs > 0 else None
 
@@ -151,6 +161,34 @@ def _director_dashboard(db: Session, me: User) -> dict:
     }
 
 
+def _display_currency(db: Session, user: User, rates: dict) -> "tuple[str, Decimal]":
+    """(B) Валюта отображения баланса сотрудника: если ВСЯ его активность
+    (расходы/выдачи/переводы/приходы/авансы) в одной валюте — показываем в ней;
+    иначе (или пусто) — сом (KGS). Сходится по построению: для одновалютного C
+    сом-баланс = native×курс[C], значит native = сом/курс[C] точно. Хук исключает
+    удалённые записи из distinct."""
+    uid = user.id
+    curs: set[str] = set()
+    for c, in db.query(Expense.currency).filter(Expense.employee_id == uid).distinct():
+        curs.add(c or "KGS")
+    for c, in db.query(BalanceTopUp.currency).filter(
+        or_(BalanceTopUp.user_id == uid, BalanceTopUp.admin_id == uid)
+    ).distinct():
+        curs.add(c or "KGS")
+    for c, in db.query(MoneyTransfer.currency).filter(
+        or_(MoneyTransfer.from_user_id == uid, MoneyTransfer.to_user_id == uid)
+    ).distinct():
+        curs.add(c or "KGS")
+    for c, in db.query(Income.currency).filter(Income.received_by_id == uid).distinct():
+        curs.add(c or "KGS")
+    for c, in db.query(Advance.currency).filter(Advance.employee_id == uid).distinct():
+        curs.add(c or "KGS")
+    if len(curs) == 1:
+        c = next(iter(curs))
+        return c, rates.get(c, Decimal("1"))
+    return "KGS", Decimal("1")
+
+
 def _accountable_dashboard(db: Session, user: User) -> dict:
     rates = load_org_rates(db, user.org_id)
     issued = issued_total(db, user.org_id, user.id)
@@ -164,6 +202,12 @@ def _accountable_dashboard(db: Session, user: User) -> dict:
 
     current_balance = compute_current_balance(db, user.org_id, user.id, rates=rates)
     total_received = compute_total_received(db, user.org_id, user.id, rates=rates)
+
+    # (B) Отображаем сводные суммы в родной валюте сотрудника, если она одна.
+    disp_cur, disp_rate = _display_currency(db, user, rates)
+
+    def _disp(v: Decimal) -> float:
+        return float(v / disp_rate) if disp_rate else float(v)
 
     # Pending заявки этого юзера (исходящие)
     pending_my_requests = (
@@ -186,14 +230,17 @@ def _accountable_dashboard(db: Session, user: User) -> dict:
         "totals": {
             # Старые поля — для обратной совместимости с MyDashboard
             "issued": float(issued),
-            "spent": float(spent),
+            "spent": _disp(spent),
             "balance": float(issued - spent),
+            # Лимит и месячный расход — в сомах (лимит задаётся в сомах, ProgressBar сравнивает их между собой)
             "monthly_spent": float(monthly_spent),
             "monthly_limit": float(monthly_limit),
             "monthly_remaining": float(monthly_limit - monthly_spent) if monthly_limit > 0 else None,
             # Новые поля — current_balance / total_received / счётчик заявок
-            "current_balance": float(current_balance),
-            "total_received": float(total_received),
+            "current_balance": _disp(current_balance),
+            "total_received": _disp(total_received),
+            # (B) валюта отображения сводных карточек (родная, если одна; иначе KGS)
+            "balance_currency": disp_cur,
             "pending_my_requests": int(pending_my_requests),
         },
         "allowed_categories": allowed_categories,

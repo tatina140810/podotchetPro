@@ -20,6 +20,25 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from database import Base
 
 
+class SoftDeleteMixin:
+    """Мягкое удаление: запись физически остаётся в БД, но исключается из ВСЕХ
+    выборок и агрегатов глобальным хуком (services/soft_delete.py, событие
+    do_orm_execute + with_loader_criteria по этому миксину). Балансы/отчёты
+    вычисляются на лету, поэтому один хук закрывает все ~60 точек агрегации.
+
+    - deleted_at NULL  → запись активна;
+    - deleted_at задан → «удалена», не видна нигде, кроме явного
+      execution_options(include_deleted=True) (восстановление, change-log,
+      блокировки удаления справочников).
+    deleted_by — кто удалил (для аудита)."""
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    deleted_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+
 class Organization(Base):
     __tablename__ = "organizations"
 
@@ -245,7 +264,7 @@ class Advance(Base):
     employee: Mapped[User] = relationship(foreign_keys=[employee_id])
 
 
-class Expense(Base):
+class Expense(Base, SoftDeleteMixin):
     __tablename__ = "expenses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -515,7 +534,7 @@ class MoneyRequestItem(Base):
     category: Mapped[Optional[Category]] = relationship()
 
 
-class MoneyTransfer(Base):
+class MoneyTransfer(Base, SoftDeleteMixin):
     __tablename__ = "money_transfers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -542,7 +561,7 @@ class MoneyTransfer(Base):
     to_user: Mapped[User] = relationship(foreign_keys=[to_user_id])
 
 
-class BalanceTopUp(Base):
+class BalanceTopUp(Base, SoftDeleteMixin):
     """Пополнение баланса юзера 'из казны' (вносит admin или сам gen_director)."""
     __tablename__ = "balance_topups"
 
@@ -610,7 +629,7 @@ class PushSubscription(Base):
     )
 
 
-class Income(Base):
+class Income(Base, SoftDeleteMixin):
     """Поступление денег в организацию извне (кредит, оплата клиента, partner и т.п.).
     В отличие от BalanceTopUp — это новые деньги в системе, не перераспределение.
     Влияет на current_balance получателя только если currency=KGS (см. balance.py)."""
@@ -922,3 +941,33 @@ class SupplierAdvanceTransaction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     created_by: Mapped[Optional[User]] = relationship(foreign_keys=[created_by_id])
+
+
+class RecordChangeLog(Base):
+    """Несокращаемый журнал изменений финансовых записей (расход/приход/передача).
+    Пишется на КАЖДОЕ обновление и удаление, без исключений. Для action='update'
+    diff = {"field": {"old": ..., "new": ...}} только по изменённым полям; для
+    action='delete' diff = полный снимок записи на момент удаления (чтобы её можно
+    было восстановить). Сам журнал в soft-delete НЕ участвует (это не SoftDeleteMixin)."""
+    __tablename__ = "record_change_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    # 'expense' | 'income' | 'transfer'
+    entity_type: Mapped[str] = mapped_column(String(16), nullable=False)
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    # 'update' | 'delete'
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    changed_by: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    diff: Mapped[dict] = mapped_column(JSON, nullable=False)
+
+    __table_args__ = (
+        sa.Index("ix_rcl_entity", "entity_type", "entity_id"),
+    )

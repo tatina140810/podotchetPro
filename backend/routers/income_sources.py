@@ -135,7 +135,9 @@ def delete_income_source(
     s = db.get(IncomeSource, source_id)
     if not s or s.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Источник не найден")
-    used = db.query(Income.id).filter(Income.source_id == source_id).first()
+    # include_deleted=True: даже soft-deleted приходы на источник блокируют удаление,
+    # чтобы CASCADE не унёс их историю (тумблер is_active — штатный способ «спрятать»).
+    used = db.query(Income.id).filter(Income.source_id == source_id).execution_options(include_deleted=True).first()
     if used:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,

@@ -6,9 +6,13 @@ from sqlalchemy.orm import Session
 
 from auth import get_current_user, require_admin, require_auditor
 from database import get_db
-from models import Category, Department, User
+from models import Category, Department, Expense, User
 from schemas import CategoryCreate, CategoryOut, CategoryUpdate
-from services.permissions import member_active_workspace_id, owner_isolation_ws_id
+from services.permissions import (
+    auditor_department_ids,
+    member_active_workspace_id,
+    owner_isolation_ws_id,
+)
 
 
 router = APIRouter(prefix="/api/categories", tags=["categories"])
@@ -79,6 +83,29 @@ def list_categories(db: Session = Depends(get_db), me: User = Depends(get_curren
     base = db.query(Category).filter(
         Category.org_id == me.org_id, Category.is_active.is_(True),
     )
+    dept_scope = auditor_department_ids(db, me)
+    if dept_scope is not None:
+        # Ограниченный аудитор: видит только категории, по которым есть расходы его
+        # подразделения (пустые категории скрыты) + их родителей (чтобы двухуровневое
+        # дерево и имена родителей не «поехали»).
+        cat_ids = {
+            cid for (cid,) in db.query(Expense.category_id).filter(
+                Expense.org_id == me.org_id,
+                Expense.department_id.in_(dept_scope),
+                Expense.category_id.isnot(None),
+            ).distinct()
+        }
+        parent_ids = {
+            pid for (pid,) in db.query(Category.parent_id).filter(
+                Category.id.in_(cat_ids or {-1}),
+                Category.parent_id.isnot(None),
+            ).distinct()
+        }
+        allowed_ids = cat_ids | parent_ids
+        cats = base.filter(Category.id.in_(allowed_ids or {-1})).order_by(Category.name).all()
+        parents_by_id = {c.id: c for c in cats if c.parent_id is None}
+        dept_names = _dept_names(db, me.org_id)
+        return [_to_out(c, parents_by_id, dept_names) for c in cats]
     iso = owner_isolation_ws_id(db, me)
     if iso is not None:
         # Владелец пространства: категории СВОЕГО пространства (изоляция) + служебные

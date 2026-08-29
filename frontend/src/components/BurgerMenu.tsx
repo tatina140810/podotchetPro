@@ -94,7 +94,9 @@ export function BurgerMenu() {
         { to: "/", label: "Главная" },
         { to: "/my-expenses", label: "Мои расходы" },
         { to: "/my-history", label: "Моя история" },
-        { to: "/supplier-advances", label: "Авансы поставщикам" },
+        // «Авансы поставщикам» — только у владельца проектного пространства (Мээрим),
+        // это фича его пространства. Обычному подотчётному (Адик) не показываем.
+        ...(isoOwner ? [{ to: "/supplier-advances", label: "Авансы поставщикам" }] : []),
         { to: "/requests", label: "Заявки" },
         { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/my-subordinates", label: "Мои подотчётные" },

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { ProgressBar } from "../components/ProgressBar";
 import { StatusBadge } from "../components/StatusBadge";
+import { SYMBOL } from "../lib/format-currency";
 
 interface AccountableDash {
   view: "accountable";
@@ -15,6 +16,7 @@ interface AccountableDash {
     monthly_remaining: number | null;
     current_balance: number;
     total_received: number;
+    balance_currency?: string;
     pending_my_requests: number;
   };
   recent_expenses: any[];
@@ -32,9 +34,9 @@ export default function MyDashboard() {
       <h1 className="h1">Мой баланс</h1>
 
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))" }}>
-        <Stat label="Текущий остаток" value={t.current_balance} accent />
-        <Stat label="Получено всего" value={t.total_received} />
-        <Stat label="Потрачено" value={t.spent} />
+        <Stat label="Текущий остаток" value={t.current_balance} currency={t.balance_currency} accent />
+        <Stat label="Получено всего" value={t.total_received} currency={t.balance_currency} />
+        <Stat label="Потрачено" value={t.spent} currency={t.balance_currency} />
       </div>
 
       {t.pending_my_requests > 0 && (
@@ -72,7 +74,7 @@ export default function MyDashboard() {
                 <tr key={e.id}>
                   <td className="muted" style={{ fontSize: 12 }}>{new Date(e.spent_at).toLocaleDateString("ru-RU")}</td>
                   <td>{e.category}</td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>{Number(e.amount).toLocaleString("ru-RU")} с</td>
+                  <td style={{ textAlign: "right", fontWeight: 600 }}>{Number(e.amount).toLocaleString("ru-RU")} {SYMBOL[e.currency] || "сом"}</td>
                   <td><StatusBadge status={e.status} /></td>
                 </tr>
               ))}
@@ -84,7 +86,7 @@ export default function MyDashboard() {
   );
 }
 
-function Stat({ label, value, accent }: { label: string; value: number; accent?: boolean }) {
+function Stat({ label, value, currency, accent }: { label: string; value: number; currency?: string; accent?: boolean }) {
   return (
     <div className="card">
       <div className="muted" style={{ fontSize: 12 }}>{label}</div>
@@ -92,7 +94,7 @@ function Stat({ label, value, accent }: { label: string; value: number; accent?:
         fontSize: 22, fontWeight: 700, marginTop: 6,
         color: accent ? (value < 0 ? "var(--danger)" : "var(--accent-light)") : "var(--text)",
       }}>
-        {Number(value).toLocaleString("ru-RU")} <span className="muted" style={{ fontSize: 13 }}>сом</span>
+        {Number(value).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} <span className="muted" style={{ fontSize: 13 }}>{SYMBOL[currency || "KGS"] || "сом"}</span>
       </div>
     </div>
   );

@@ -25,7 +25,7 @@ from models import (
     User,
 )
 from schemas import DepartmentCreate, DepartmentOut
-from services.permissions import member_active_workspace_id
+from services.permissions import auditor_department_ids, member_active_workspace_id
 
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
@@ -119,11 +119,15 @@ def list_departments(
     нему не привязан. По умолчанию accountable видит только свои подразделения."""
     q = db.query(Department).filter(Department.org_id == me.org_id)
     member_ws = member_active_workspace_id(db, me.id, me.org_id)
+    dept_scope = auditor_department_ids(db, me)  # ограниченный аудитор
     if member_ws is not None:
         # Участник пространства (владелец ИЛИ подотчётный): подразделения, где есть
         # движения его пространства (+ совсем новые/пустые). Чужие — скрыты.
         ids = _scoped_department_ids(db, me.org_id, workspace_id=member_ws, common=False)
         q = q.filter(Department.id.in_(ids or {-1}))
+    elif dept_scope is not None:
+        # Ограниченный аудитор видит только свои подразделения.
+        q = q.filter(Department.id.in_(dept_scope))
     elif can_manage_workspaces(me):
         pass  # superadmin / gen_director — видят все подразделения (оверсайт)
     elif is_director_or_auditor(me):
@@ -176,11 +180,13 @@ def delete_department(
     if not d or d.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
 
-    # Проверяем привязки, блокирующие удаление.
+    # Проверяем привязки, блокирующие удаление. include_deleted=True: soft-deleted
+    # расходы/пополнения ТОЖЕ блокируют — иначе удаление подразделения снесёт их по
+    # CASCADE, а мы вводили soft-delete именно ради сохранности истории.
     blockers: list[str] = []
-    if db.query(Expense.id).filter(Expense.department_id == dept_id).first():
+    if db.query(Expense.id).filter(Expense.department_id == dept_id).execution_options(include_deleted=True).first():
         blockers.append("расходы")
-    if db.query(BalanceTopUp.id).filter(BalanceTopUp.department_id == dept_id).first():
+    if db.query(BalanceTopUp.id).filter(BalanceTopUp.department_id == dept_id).execution_options(include_deleted=True).first():
         blockers.append("пополнения")
     if db.query(MoneyRequest.id).filter(MoneyRequest.department_id == dept_id).first():
         blockers.append("заявки")

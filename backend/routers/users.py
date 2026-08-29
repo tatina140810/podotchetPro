@@ -52,6 +52,7 @@ from services.balance import (
     transferred_out_total,
 )
 from services.permissions import (
+    auditor_visible_user_ids,
     hidden_user_ids,
     owner_isolation_ws_id,
     visible_user_ids,
@@ -158,6 +159,9 @@ def list_users(
     iso = owner_isolation_ws_id(db, me)
     if iso is not None:  # владелец пространства видит только участников своего пространства
         q = q.filter(User.id.in_(workspace_member_ids(db, iso)))
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои»
+    if aud_visible is not None:
+        q = q.filter(User.id.in_(aud_visible or {-1}))
     users = q.order_by(User.created_at.desc()).all()
     rates = load_org_rates(db, me.org_id)  # один раз на весь list_users
     return [_with_balance(db, u, rates=rates) for u in users]
@@ -289,6 +293,9 @@ def get_user(user_id: int, db: Session = Depends(get_db), me: User = Depends(get
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
     # Фича 2: карточка/баланс конфиденциального сотрудника — только авторизованным и ему самому.
     if user_id in hidden_user_ids(db, me):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои»
+    if aud_visible is not None and user_id not in aud_visible:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
     return _with_balance(db, u)
 
@@ -498,6 +505,9 @@ def get_user_balance(
     # Фича 2: баланс/история конфиденциального сотрудника — только авторизованным и ему самому.
     if user_id in hidden_user_ids(db, me):
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои»
+    if aud_visible is not None and user_id not in aud_visible:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
 
     entries = build_user_history_entries(db, me.org_id, u.id, date_from, date_to)
     current = compute_current_balance(db, me.org_id, u.id)
@@ -531,6 +541,9 @@ def get_expense_chain(
     visible = visible_user_ids(db, me)
     if visible is not None and user_id not in visible:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к этой цепочке")
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои»
+    if aud_visible is not None and user_id not in aud_visible:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
 
     MAX_DEPTH = 5
     visited: set[int] = set()

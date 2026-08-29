@@ -49,6 +49,9 @@ from services.balance import (
 )
 from services.excel_export import build_workbook
 from services.permissions import (
+    auditor_department_ids,
+    auditor_visible_user_ids,
+    enforce_report_department,
     hidden_user_ids,
     masked_workspace_category_ids,
     owner_isolation_ws_id,
@@ -848,7 +851,7 @@ def _build_employees_report(
     department_id: Optional[int] = None, hidden_ids: Optional[set] = None,
     start: Optional[datetime] = None, end: Optional[datetime] = None,
     iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
-    exclude_ws: bool = False,
+    exclude_ws: bool = False, restrict_user_ids: Optional[set] = None,
 ) -> dict:
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
@@ -919,6 +922,8 @@ def _build_employees_report(
         users_q = users_q.filter(User.id.notin_(hidden_ids))
     if iso_members is not None:  # изоляция владельца: только участники пространства
         users_q = users_q.filter(User.id.in_(iso_members))
+    if restrict_user_ids is not None:  # ограниченный аудитор: только сотрудники его подразделения
+        users_q = users_q.filter(User.id.in_(restrict_user_ids or {-1}))
     users = users_q.all()
     rows: list[dict] = []
     for u in users:
@@ -1169,6 +1174,7 @@ def category_report(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    department_id = enforce_report_department(auditor_department_ids(db, me), department_id)
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_category_report(
         db, me.org_id, year, month, currency,
@@ -1189,12 +1195,14 @@ def employees_report(
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
+    department_id = enforce_report_department(auditor_department_ids(db, me), department_id)
     start, end = _resolve_report_range(year, month, date_from, date_to)
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_employees_report(
         db, me.org_id, year, month, currency,
         department_id=department_id, hidden_ids=hidden_user_ids(db, me),
         start=start, end=end, iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+        restrict_user_ids=auditor_visible_user_ids(db, me),
     )
 
 
@@ -1413,6 +1421,21 @@ def _build_department_report(
     }
 
 
+def _restrict_department_report(data: dict, scope: Optional[set]) -> dict:
+    """Ограничивает готовый отчёт по подразделениям набором scope (для ограниченного
+    аудитора): оставляет только его подразделения, обнуляет блок «Без подразделения»
+    и пересчитывает итоги по оставшимся."""
+    if scope is None:
+        return data
+    kept = [d for d in data.get("departments", []) if d["id"] in scope]
+    data["departments"] = kept
+    data["no_department"] = {"received": 0.0, "spent": 0.0, "operations_count": 0}
+    rec = round(sum(d["summary"]["received"] for d in kept), 2)
+    sp = round(sum(d["summary"]["spent"] for d in kept), 2)
+    data["totals"] = {"received": rec, "spent": sp, "result": round(rec - sp, 2)}
+    return data
+
+
 @router.get("/by-department")
 def department_report(
     year: int = Query(..., ge=2020, le=2100),
@@ -1422,12 +1445,13 @@ def department_report(
     me: User = Depends(require_director_or_auditor),
 ):
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
-    return _build_department_report(
+    data = _build_department_report(
         db, me.org_id, year, month, currency,
         hidden_ids=hidden_user_ids(db, me),
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
     )
+    return _restrict_department_report(data, auditor_department_ids(db, me))
 
 
 @router.get("/by-department/export")
@@ -1446,6 +1470,7 @@ def department_report_export(
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
     )
+    data = _restrict_department_report(data, auditor_department_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
     head_font = _Font(bold=True, color="FFFFFF")
     head_fill = _PatternFill("solid", fgColor="4F46E5")
@@ -1607,6 +1632,7 @@ def balance_report(
         date_to = date_to - timedelta(days=1)
     df = datetime.combine(date_from, time.min)
     dt = datetime.combine(date_to + timedelta(days=1), time.min)
+    department_id = enforce_report_department(auditor_department_ids(db, me), department_id)
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_balance_report(
         db, me.org_id, df, dt, currency,
@@ -1630,6 +1656,7 @@ def category_report_xlsx(
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     data = _build_category_report(
         db, me.org_id, year, month, currency,
+        department_id=enforce_report_department(auditor_department_ids(db, me), None),
         hidden_ids=hidden_user_ids(db, me),
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
@@ -1706,8 +1733,10 @@ def employees_report_xlsx(
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     data = _build_employees_report(
         db, me.org_id, year, month, currency,
+        department_id=enforce_report_department(auditor_department_ids(db, me), None),
         hidden_ids=hidden_user_ids(db, me), start=start, end=end,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+        restrict_user_ids=auditor_visible_user_ids(db, me),
     )
     sym = "$" if data["currency"] == "USD" else "с"
     wb = _Workbook()
@@ -1791,6 +1820,9 @@ def employee_details_xlsx(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
     if user_id in hidden_user_ids(db, me):  # Фича 2: выгрузка конфиденциального скрыта
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои»
+    if aud_visible is not None and user_id not in aud_visible:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
 
     start, end = _resolve_report_range(year, month, date_from, date_to)
     entries = build_user_history_entries(db, me.org_id, u.id, start, end)
@@ -1863,6 +1895,9 @@ def employee_history_xlsx(
     if me.id != u.id and not is_director_or_auditor(me):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа")
     if user_id in hidden_user_ids(db, me):  # Фича 2 (сам сотрудник видит себя)
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
+    aud_visible = auditor_visible_user_ids(db, me)  # ограниченный аудитор — только «свои» (+ себя)
+    if aud_visible is not None and user_id not in aud_visible:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Сотрудник не найден")
 
     entries = build_user_history_entries(db, me.org_id, u.id, date_from, date_to)

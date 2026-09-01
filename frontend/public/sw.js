@@ -11,7 +11,7 @@
  * Версия инкрементируется при изменении стратегий — старые кэши сносятся в activate.
  */
 
-const VERSION = "v16";
+const VERSION = "v17";
 const SHELL_CACHE = `pp-shell-${VERSION}`;
 const API_CACHE = `pp-api-${VERSION}`;
 

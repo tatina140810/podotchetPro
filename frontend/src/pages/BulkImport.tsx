@@ -805,7 +805,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
       if (o.kind === "expense") {
         await api(`/api/expenses/${o.id}`, { method: "DELETE" });
       } else if (o.kind === "income") {
-        await api(`/api/incomes/${o.id}`, { method: "DELETE" });
+        await api(`/api/income/${o.id}`, { method: "DELETE" });
       } else if (o.kind === "request") {
         await api(`/api/requests/${o.id}`, { method: "DELETE" });
       } else {

@@ -73,7 +73,7 @@ const J = (body: any) => ({ method: "PATCH", body } as const);
 export const profileApi = {
   // PATCH
   updateTopup: (id: number, body: any) => api(`/api/users/topups/${id}`, J(body)),
-  updateIncome: (id: number, body: any) => api(`/api/incomes/${id}`, J(body)),
+  updateIncome: (id: number, body: any) => api(`/api/income/${id}`, J(body)),
   updateExpense: (id: number, body: any) => api(`/api/expenses/${id}`, J(body)),
   // Одобрить/отклонить расход на проверке (директор/админ).
   reviewExpense: (id: number, status: "approved" | "rejected", review_comment?: string | null) =>
@@ -82,7 +82,7 @@ export const profileApi = {
     api(`/api/requests/${id}`, J({ comment })),
   // DELETE
   deleteTopup: (id: number) => api(`/api/users/topups/${id}`, { method: "DELETE" }),
-  deleteIncome: (id: number) => api(`/api/incomes/${id}`, { method: "DELETE" }),
+  deleteIncome: (id: number) => api(`/api/income/${id}`, { method: "DELETE" }),
   deleteExpense: (id: number) => api(`/api/expenses/${id}`, { method: "DELETE" }),
   deleteRequest: (id: number) => api(`/api/requests/${id}`, { method: "DELETE" }),
   // CREATE (POST)
@@ -97,5 +97,5 @@ export const profileApi = {
     api(`/api/expenses`, { method: "POST", body: { ...body, on_behalf_of_user_id: empId } }),
   // Приход-Income (для Undo удаления income-строки).
   createIncome: (empId: number, body: any) =>
-    api(`/api/incomes`, { method: "POST", body: { ...body, received_by_id: empId } }),
+    api(`/api/income`, { method: "POST", body: { ...body, received_by_id: empId } }),
 };

@@ -134,6 +134,12 @@ R2 пока не используется.
   (`useDisplayCurrency` → `currency=` в запрос). У роли `accountable` он скрыт
   (суммы всегда в сомах).
 - Все суммы в UI: `formatAmountWithEquivalent` / `formatMoney` (KGS-эквивалент).
+- **Валюта подразделения** (`Department.currency`, NULL = сомы; «Мос офис» = RUB):
+  профиль сотрудника (`/api/employees/{id}/profile`, `currency=auto` по умолчанию)
+  показывает итоги/остаток в валюте подразделения (иначе — если вся история в одной
+  валюте — в ней, иначе KGS); форма нового расхода подставляет её по умолчанию.
+  Менять — страница «Подразделения» / `PATCH /api/departments/{id}`.
+  Исправление ошибочно внесённой валюты — `scripts/backfill_expense_currency.py`.
 
 ## Деплой
 

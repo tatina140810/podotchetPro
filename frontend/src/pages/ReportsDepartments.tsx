@@ -86,14 +86,11 @@ export default function ReportsDepartments() {
 
       {data && (
         <>
+          {/* В отчёте показываем только расход по подразделениям (приход/итог
+              скрыты по решению Тати 2026-09-01; бэкенд и Excel их по-прежнему считают). */}
           <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
-            <div className="card"><div className="muted" style={{ fontSize: 12 }}>Всего приход</div>
-              <div style={{ fontSize: 20, fontWeight: 700, color: "var(--success)", marginTop: 4 }}>{fmt(data.totals.received)} {sym}</div></div>
             <div className="card"><div className="muted" style={{ fontSize: 12 }}>Всего расход</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: "var(--danger)", marginTop: 4 }}>{fmt(data.totals.spent)} {sym}</div></div>
-            <div className="card"><div className="muted" style={{ fontSize: 12 }}>Результат периода</div>
-              <div style={{ fontSize: 20, fontWeight: 700, marginTop: 4, color: data.totals.result >= 0 ? "var(--success)" : "var(--danger)" }}>
-                {data.totals.result >= 0 ? "+" : ""}{fmt(data.totals.result)} {sym}</div></div>
           </div>
 
           <div className="grid" style={{ gap: 10 }}>
@@ -105,9 +102,7 @@ export default function ReportsDepartments() {
                     onClick={() => nav(`/reports/departments/${d.id}?year=${year}&month=${month}`)}>
                     <span style={{ fontWeight: 600 }}>{d.name} →</span>
                     <div className="row" style={{ gap: 16, flexWrap: "wrap", fontSize: 14 }}>
-                      <span className="muted">приход <b style={{ color: "var(--success)" }}>{fmt(s.received)} {sym}</b></span>
                       <span className="muted">расход <b style={{ color: "var(--danger)" }}>{fmt(s.spent)} {sym}</b></span>
-                      <span className="muted">итог <b style={{ color: s.result >= 0 ? "var(--success)" : "var(--danger)" }}>{s.result >= 0 ? "+" : ""}{fmt(s.result)} {sym}</b></span>
                       <span className="muted">{s.operations_count} опер.</span>
                     </div>
                   </div>
@@ -124,7 +119,6 @@ export default function ReportsDepartments() {
                   <div className="muted" style={{ fontSize: 12 }}>Операции без указанного подразделения</div>
                 </div>
                 <div className="row" style={{ gap: 16, fontSize: 14 }}>
-                  <span className="muted">приход <b style={{ color: "var(--success)" }}>{fmt(data.no_department.received)} {sym}</b></span>
                   <span className="muted">расход <b style={{ color: "var(--danger)" }}>{fmt(data.no_department.spent)} {sym}</b></span>
                   <span className="muted">{data.no_department.operations_count} опер.</span>
                 </div>

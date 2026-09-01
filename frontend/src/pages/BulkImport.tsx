@@ -397,20 +397,6 @@ export default function BulkImport() {
                     placeholder="напр. «Аренда Q1»"
                   />
                   {r.type === "expense" && (
-                    <label
-                      title="Расход из личных средств в счёт подразделения (учтётся как приход+расход)"
-                      style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 4, fontSize: 12, cursor: "pointer", color: "var(--muted)" }}
-                    >
-                      <input
-                        type="checkbox"
-                        checked={r.is_personal_contribution}
-                        onChange={(e) => updateRow(idx, { is_personal_contribution: e.target.checked })}
-                        style={{ width: "auto", margin: 0 }}
-                      />
-                      Из личных средств
-                    </label>
-                  )}
-                  {r.type === "expense" && (
                     <div style={{ marginTop: 4, fontSize: 12 }}>
                       {r.receipt_url ? (
                         <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--muted)" }}>

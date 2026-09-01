@@ -17,6 +17,8 @@ interface Props {
   rows: any[];
   sym: string;
   fmt: (n: number) => string;
+  /** Валюта, в которой показаны amount_kgs/итоги (KGS/USD/RUB/EUR). */
+  displayCurrency: string;
   canEdit: boolean;
   /** Может одобрять/отклонять расходы на проверке (директор/админ). */
   canReview: boolean;
@@ -52,7 +54,7 @@ export function ProfileEditableTable(p: Props) {
 
   function startAdd() {
     setForm({
-      date: today(), amount: "", currency: "KGS", comment: "",
+      date: today(), amount: "", currency: p.displayCurrency, comment: "",
       from_id: "", to_user_id: "", category_id: "",
       department_id: p.employeeDeptIds.length === 1 ? String(p.employeeDeptIds[0]) : "",
     });
@@ -242,7 +244,7 @@ export function ProfileEditableTable(p: Props) {
   function displayCells(r: any): React.ReactNode[] {
     const amountTd = (
       <span>{p.fmt(r.amount_kgs)} {p.sym}
-        {r.currency !== "KGS" && <span className="muted" style={{ fontSize: 11 }}> ({p.fmt(r.amount)} {r.currency})</span>}
+        {r.currency !== p.displayCurrency && <span className="muted" style={{ fontSize: 11 }}> ({p.fmt(r.amount)} {r.currency})</span>}
       </span>
     );
     if (p.kind === "received") return [r.date.slice(0, 10), r.from_name || "—", amountTd, r.comment || ""];

@@ -44,11 +44,47 @@ def _month_range(year: int, month: int) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _conv(kgs_val: float, currency: str, usd_rate) -> float:
-    """KGS → display currency. Сейчас поддержан только USD (как в reports.py)."""
-    if currency == "USD" and usd_rate and usd_rate > 0:
-        return round(kgs_val / float(usd_rate), 2)
+CURRENCY_SYMBOLS = {"KGS": "с", "USD": "$", "RUB": "₽", "EUR": "€"}
+_CURRENCY_PATTERN = "^(auto|KGS|USD|RUB|EUR)$"
+
+
+def _conv(kgs_val: float, currency: str, rates: dict) -> float:
+    """KGS → валюта отображения по текущему курсу org (rates[X] = сколько KGS за 1 X)."""
+    rate = rates.get(currency)
+    if currency != "KGS" and rate and rate > 0:
+        return round(kgs_val / float(rate), 2)
     return round(kgs_val, 2)
+
+
+def _detect_native_currency(db: Session, org_id: int, user_id: int) -> str:
+    """«Родная» валюта сотрудника для режима auto: если ВСЕ его расходы и
+    выдачи (входящие/исходящие) за всё время в одной валюте — она; иначе KGS.
+    Пример: у Мос офиса всё в RUB → профиль показывается в ₽."""
+    exp_curs = {
+        c for (c,) in db.query(Expense.currency)
+        .filter(Expense.org_id == org_id, Expense.employee_id == user_id).distinct()
+    }
+    topup_curs = {
+        c for (c,) in db.query(BalanceTopUp.currency)
+        .filter(BalanceTopUp.org_id == org_id,
+                (BalanceTopUp.user_id == user_id) | (BalanceTopUp.admin_id == user_id)).distinct()
+    }
+    income_curs = {
+        c for (c,) in db.query(Income.currency)
+        .filter(Income.org_id == org_id, Income.received_by_id == user_id).distinct()
+    }
+    curs = exp_curs | topup_curs | income_curs
+    if len(curs) == 1:
+        return next(iter(curs))
+    return "KGS"
+
+
+def _resolve_display_currency(db: Session, u: User, currency: str, rates: dict) -> str:
+    """auto → родная валюта сотрудника; явная валюта без курса → KGS (цифры не пропадают)."""
+    cur = _detect_native_currency(db, u.org_id, u.id) if currency == "auto" else currency
+    if cur != "KGS" and not rates.get(cur):
+        return "KGS"
+    return cur
 
 
 def _load_employee(db: Session, me: User, user_id: int) -> User:
@@ -85,13 +121,13 @@ def _build_profile(db: Session, u: User, month: int, year: int, currency: str) -
     org_id = u.org_id
     start, end = _month_range(year, month)
     rates = load_org_rates(db, org_id)
-    usd_rate = rates.get("USD")
+    currency = _resolve_display_currency(db, u, currency, rates)
 
     def kgs(amount, cur) -> float:
         return float(Decimal(str(amount)) * rates.get(cur, Decimal("0")))
 
     def disp(kgs_val: float) -> float:
-        return _conv(kgs_val, currency, usd_rate)
+        return _conv(kgs_val, currency, rates)
 
     # --- ПРИХОДЫ: входящие выдачи (topup.user_id=emp) + Income (received_by=emp) ---
     received: list[dict] = []
@@ -239,7 +275,7 @@ def _build_profile(db: Session, u: User, month: int, year: int, currency: str) -
             "department_ids": [d.id for d in u.departments],
         },
         "period": {"month": month, "year": year},
-        "currency": currency if (currency == "KGS" or usd_rate) else "KGS",
+        "currency": currency,
         "summary": {
             "received": {"total": received_total, "count": len(received)},
             "transferred": {"total": transferred_total, "count": len(transferred)},
@@ -260,7 +296,7 @@ def employee_profile(
     user_id: int,
     month: int = Query(..., ge=1, le=12),
     year: int = Query(..., ge=2020, le=2100),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="auto", pattern=_CURRENCY_PATTERN),
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
@@ -277,7 +313,7 @@ def employee_profile_export(
     user_id: int,
     month: int = Query(..., ge=1, le=12),
     year: int = Query(..., ge=2020, le=2100),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="auto", pattern=_CURRENCY_PATTERN),
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
@@ -287,7 +323,7 @@ def employee_profile_export(
     ensure_can_export(db, me)  # guard плана: экспорт только если can_export
     u = _load_employee(db, me, user_id)
     data = _build_profile(db, u, month, year, currency)
-    sym = "$" if data["currency"] == "USD" else "с"
+    sym = CURRENCY_SYMBOLS.get(data["currency"], data["currency"])
 
     wb = Workbook()
     head_font = Font(bold=True, color="FFFFFF")

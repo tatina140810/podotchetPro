@@ -24,10 +24,15 @@ export interface RequestApprovedRow extends RequestOwnRow {
   employee_name: string | null;
 }
 
+export type ProfileCurrency = "KGS" | "USD" | "RUB" | "EUR";
+/** Валюта запроса профиля: auto = «родная» валюта сотрудника (определяет бэкенд). */
+export type ProfileCurrencyParam = "auto" | ProfileCurrency;
+export const CURRENCY_SYMBOLS: Record<ProfileCurrency, string> = { KGS: "с", USD: "$", RUB: "₽", EUR: "€" };
+
 export interface EmployeeProfile {
   employee: { id: number; name: string; role: string; department: string | null; department_ids: number[] };
   period: { month: number; year: number };
-  currency: "KGS" | "USD";
+  currency: ProfileCurrency;
   summary: {
     received: { total: number; count: number };
     transferred: { total: number; count: number };
@@ -43,7 +48,7 @@ export interface EmployeeProfile {
 }
 
 export function getEmployeeProfile(
-  id: number, month: number, year: number, currency: string,
+  id: number, month: number, year: number, currency: ProfileCurrencyParam,
 ): Promise<EmployeeProfile> {
   return api<EmployeeProfile>(
     `/api/employees/${id}/profile?month=${month}&year=${year}&currency=${currency}&_t=${Date.now()}`,
@@ -51,7 +56,7 @@ export function getEmployeeProfile(
 }
 
 export function exportEmployeeProfile(
-  id: number, month: number, year: number, currency: string, name: string,
+  id: number, month: number, year: number, currency: ProfileCurrencyParam, name: string,
 ): Promise<void> {
   const safe = name.replace(/[^\wа-яА-ЯёЁ-]+/g, "_");
   return downloadFile(

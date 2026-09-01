@@ -10,7 +10,8 @@ import { api } from "../api/client";
 import { listColleagues } from "../api/users";
 import { listDepartments, type Department } from "../api/departments";
 import {
-  getEmployeeProfile, exportEmployeeProfile, profileApi, type EmployeeProfile,
+  getEmployeeProfile, exportEmployeeProfile, profileApi, CURRENCY_SYMBOLS,
+  type EmployeeProfile, type ProfileCurrencyParam,
 } from "../api/employees";
 
 const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
@@ -37,6 +38,9 @@ export default function EmployeeProfile() {
 
   const [month, setMonth] = useState(Number(sp.get("month")) || today.getMonth() + 1);
   const [year, setYear] = useState(Number(sp.get("year")) || today.getFullYear());
+  // Валюта профиля: «Авто» = родная валюта сотрудника (бэкенд смотрит все его операции).
+  // Если глобальный тумблер стоит на $, стартуем с $.
+  const [cur, setCur] = useState<ProfileCurrencyParam>(display === "USD" ? "USD" : "auto");
   const [data, setData] = useState<EmployeeProfile | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<SectionKey>>(new Set());
@@ -54,12 +58,12 @@ export default function EmployeeProfile() {
   const canEdit = isDirectorOrAuditor(user?.role);
   const canExport = isDirectorLevel(user?.role);
 
-  const reload = () => getEmployeeProfile(uid, month, year, display).then(setData).catch((e) => setErr(e.message));
+  const reload = () => getEmployeeProfile(uid, month, year, cur).then(setData).catch((e) => setErr(e.message));
 
   useEffect(() => {
     setData(null); setErr(null); setEditingKey(null);
-    getEmployeeProfile(uid, month, year, display).then(setData).catch((e) => setErr(e.message));
-  }, [uid, month, year, display]);
+    getEmployeeProfile(uid, month, year, cur).then(setData).catch((e) => setErr(e.message));
+  }, [uid, month, year, cur]);
 
   useEffect(() => {
     if (!canEdit) return;
@@ -75,7 +79,7 @@ export default function EmployeeProfile() {
     return () => clearTimeout(t);
   }, [undo]);
 
-  const sym = data?.currency === "USD" ? "$" : "с";
+  const sym = data ? (CURRENCY_SYMBOLS[data.currency] ?? data.currency) : "с";
   const fmt = (n: number) => n.toLocaleString("ru-RU");
 
   function toggle(k: SectionKey) {
@@ -98,7 +102,7 @@ export default function EmployeeProfile() {
   async function onExport() {
     if (!data) return;
     setExporting(true);
-    try { await exportEmployeeProfile(uid, month, year, display, data.employee.name); }
+    try { await exportEmployeeProfile(uid, month, year, cur, data.employee.name); }
     catch (e: any) { toast.show("error", e.message || "Не удалось скачать"); }
     finally { setExporting(false); }
   }
@@ -111,7 +115,7 @@ export default function EmployeeProfile() {
   const otherEditing = editingKey !== null;
 
   const tableProps = {
-    sym, fmt, canEdit, canReview: isDirectorLevel(user?.role), editingKey, setEditingKey,
+    sym, fmt, displayCurrency: data.currency, canEdit, canReview: isDirectorLevel(user?.role), editingKey, setEditingKey,
     colleagues, categories, employeeId: uid,
     employeeDeptIds: emp.department_ids || [], departments,
     onChanged: reload, onDeleted,
@@ -169,6 +173,16 @@ export default function EmployeeProfile() {
               <label>Год</label>
               <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 90 }} />
             </div>
+            <div>
+              <label>Валюта</label>
+              <select value={cur} onChange={(e) => setCur(e.target.value as ProfileCurrencyParam)} title="Авто — родная валюта сотрудника">
+                <option value="auto">Авто{cur === "auto" ? ` (${sym})` : ""}</option>
+                <option value="KGS">с</option>
+                <option value="USD">$</option>
+                <option value="RUB">₽</option>
+                <option value="EUR">€</option>
+              </select>
+            </div>
             {canExport && (
               <button onClick={onExport} disabled={exporting} style={{ background: "#107C41", color: "#fff" }}>
                 {exporting ? "..." : "Excel"}
@@ -217,7 +231,7 @@ export default function EmployeeProfile() {
         {open.has("requests") && (
           <div style={{ padding: 14, paddingTop: 0, overflow: "auto" }}>
             <div style={{ fontWeight: 600, margin: "4px 0 8px" }}>Мои заявки</div>
-            <RequestTable rows={data.requests_own} withEmployee={false} sym={sym} fmt={fmt}
+            <RequestTable rows={data.requests_own} withEmployee={false} sym={sym} fmt={fmt} displayCurrency={data.currency}
               canEdit={canEdit} otherEditing={otherEditing} editingKey={editingKey}
               onEdit={(r) => { setReqComment(r.comment || ""); setEditingKey(`req:${r.id}`); }}
               reqComment={reqComment} setReqComment={setReqComment}
@@ -225,7 +239,7 @@ export default function EmployeeProfile() {
             {data.requests_approved_by.length > 0 && (
               <>
                 <div style={{ fontWeight: 600, margin: "16px 0 8px" }}>Одобрял / отклонял</div>
-                <RequestTable rows={data.requests_approved_by} withEmployee={true} sym={sym} fmt={fmt}
+                <RequestTable rows={data.requests_approved_by} withEmployee={true} sym={sym} fmt={fmt} displayCurrency={data.currency}
                   canEdit={canEdit} otherEditing={otherEditing} editingKey={editingKey}
                   onEdit={(r) => { setReqComment(r.comment || ""); setEditingKey(`req:${r.id}`); }}
                   reqComment={reqComment} setReqComment={setReqComment}
@@ -264,8 +278,8 @@ function MetricCard({ label, total, count, color, onClick }: {
   );
 }
 
-function RequestTable({ rows, withEmployee, sym, fmt, canEdit, otherEditing, editingKey, onEdit, reqComment, setReqComment, onSave, onCancel, onDelete }: {
-  rows: any[]; withEmployee: boolean; sym: string; fmt: (n: number) => string;
+function RequestTable({ rows, withEmployee, sym, fmt, displayCurrency, canEdit, otherEditing, editingKey, onEdit, reqComment, setReqComment, onSave, onCancel, onDelete }: {
+  rows: any[]; withEmployee: boolean; sym: string; fmt: (n: number) => string; displayCurrency: string;
   canEdit: boolean; otherEditing: boolean; editingKey: string | null;
   onEdit: (r: any) => void; reqComment: string; setReqComment: (s: string) => void;
   onSave: (id: number) => void; onCancel: () => void; onDelete: (r: any) => void;
@@ -280,7 +294,7 @@ function RequestTable({ rows, withEmployee, sym, fmt, canEdit, otherEditing, edi
         {rows.length === 0 && <tr><td colSpan={head.length} className="muted">Пусто</td></tr>}
         {rows.map((r) => {
           const editing = editingKey === `req:${r.id}`;
-          const amount = <>{fmt(r.amount_kgs)} {sym}{r.currency !== "KGS" && <span className="muted" style={{ fontSize: 11 }}> ({fmt(r.amount)} {r.currency})</span>}</>;
+          const amount = <>{fmt(r.amount_kgs)} {sym}{r.currency !== displayCurrency && <span className="muted" style={{ fontSize: 11 }}> ({fmt(r.amount)} {r.currency})</span>}</>;
           return (
             <tr key={r.id} className="prow">
               <td className="muted" style={{ fontSize: 12 }}>{r.date.slice(0, 10)}</td>

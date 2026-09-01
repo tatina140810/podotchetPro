@@ -57,9 +57,19 @@ def _conv(kgs_val: float, currency: str, rates: dict) -> float:
 
 
 def _detect_native_currency(db: Session, org_id: int, user_id: int) -> str:
-    """«Родная» валюта сотрудника для режима auto: если ВСЕ его расходы и
-    выдачи (входящие/исходящие) за всё время в одной валюте — она; иначе KGS.
-    Пример: у Мос офиса всё в RUB → профиль показывается в ₽."""
+    """«Родная» валюта сотрудника для режима auto.
+    1) Валюта подразделения (Department.currency): если у всех его подразделений
+       с заданной валютой она одна — берём её (Мос офис = RUB → ₽).
+    2) Иначе эвристика: все расходы/выдачи/приходы за всё время в одной валюте — она.
+    3) Иначе KGS."""
+    dept_curs = {
+        c for (c,) in db.query(Department.currency)
+        .join(EmployeeDepartment, EmployeeDepartment.department_id == Department.id)
+        .filter(EmployeeDepartment.employee_id == user_id, Department.currency.isnot(None))
+        .distinct()
+    }
+    if len(dept_curs) == 1:
+        return next(iter(dept_curs))
     exp_curs = {
         c for (c,) in db.query(Expense.currency)
         .filter(Expense.org_id == org_id, Expense.employee_id == user_id).distinct()

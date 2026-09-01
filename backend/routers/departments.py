@@ -24,7 +24,7 @@ from models import (
     MoneyRequest,
     User,
 )
-from schemas import DepartmentCreate, DepartmentOut
+from schemas import DepartmentCreate, DepartmentOut, DepartmentUpdate
 from services.permissions import auditor_department_ids, member_active_workspace_id
 
 
@@ -163,11 +163,29 @@ def create_department(
     )
     if exists:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение с таким названием уже есть")
-    d = Department(org_id=me.org_id, name=name)
+    d = Department(org_id=me.org_id, name=name, currency=payload.currency)
     db.add(d)
     db.commit()
     db.refresh(d)
     return _to_out(d, {}, {})
+
+
+@router.patch("/{dept_id}", response_model=DepartmentOut)
+def update_department(
+    dept_id: int,
+    payload: DepartmentUpdate,
+    db: Session = Depends(get_db),
+    me: User = Depends(require_auditor),
+):
+    """Смена валюты подразделения (NULL = сомы). Историю расходов НЕ трогает —
+    влияет на валюту показа профиля и валюту по умолчанию в формах."""
+    d = db.get(Department, dept_id)
+    if not d or d.org_id != me.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
+    d.currency = payload.currency
+    db.commit()
+    emp_counts, cat_counts = _counts(db, me.org_id)
+    return _to_out(d, emp_counts, cat_counts)
 
 
 @router.delete("/{dept_id}", status_code=status.HTTP_204_NO_CONTENT)

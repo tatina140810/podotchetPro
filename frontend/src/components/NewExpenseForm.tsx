@@ -75,7 +75,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     listDepartments(true).then((ds) => {
       setDepartments(ds);
       // Если подразделение одно — подставляем автоматически (типичный случай).
-      if (ds.length === 1) setForm((s) => ({ ...s, department_id: String(ds[0].id) }));
+      if (ds.length === 1) setForm((s) => ({ ...s, department_id: String(ds[0].id), currency: ds[0].currency || s.currency }));
     }).catch(() => {});
   }, [me?.id]);
 
@@ -323,7 +323,11 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             <label>Подразделение</label>
             <select
               value={form.department_id}
-              onChange={(e) => setForm({ ...form, department_id: e.target.value, category_id: "" })}
+              onChange={(e) => {
+                // Валюта подразделения (напр. Мос офис = RUB) подставляется по умолчанию.
+                const dep = departments.find((d) => String(d.id) === e.target.value);
+                setForm({ ...form, department_id: e.target.value, category_id: "", currency: dep?.currency || form.currency });
+              }}
               required
             >
               <option value="">— выберите —</option>

@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    CheckConstraint,
     Boolean,
     DateTime,
     ForeignKey,
@@ -76,6 +77,9 @@ class Department(Base):
         ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Валюта подразделения (NULL = не задана → сомы). Пример: «Мос офис» = RUB —
+    # профиль сотрудников показывается в ₽, новые расходы по умолчанию в RUB.
+    currency: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     organization: Mapped[Organization] = relationship(back_populates="departments")
@@ -85,6 +89,10 @@ class Department(Base):
 
     __table_args__ = (
         UniqueConstraint("org_id", "name", name="uq_departments_org_name"),
+        CheckConstraint(
+            "currency IS NULL OR currency IN ('KGS','USD','EUR','RUB')",
+            name="ck_departments_currency",
+        ),
     )
 
 

@@ -1,16 +1,27 @@
 import { useEffect, useState } from "react";
 import {
   Department,
+  DepartmentCurrency,
   listDepartments,
   createDepartment,
   deleteDepartment,
+  updateDepartmentCurrency,
 } from "../api/departments";
+
+const CURRENCY_OPTIONS: { value: DepartmentCurrency | ""; label: string }[] = [
+  { value: "", label: "сом (по умолчанию)" },
+  { value: "KGS", label: "KGS — сом" },
+  { value: "USD", label: "USD — $" },
+  { value: "EUR", label: "EUR — €" },
+  { value: "RUB", label: "RUB — ₽" },
+];
 import { useToast } from "../components/Toast";
 
 export default function Departments() {
   const [list, setList] = useState<Department[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
+  const [currency, setCurrency] = useState<DepartmentCurrency | "">("");
   const [saving, setSaving] = useState(false);
   const toast = useToast();
 
@@ -22,15 +33,26 @@ export default function Departments() {
     if (!name.trim()) return;
     setSaving(true);
     try {
-      await createDepartment(name.trim());
+      await createDepartment(name.trim(), currency || null);
       toast.show("success", "Подразделение добавлено");
       setName("");
+      setCurrency("");
       setAdding(false);
       reload();
     } catch (e: any) {
       toast.show("error", e.message);
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function changeCurrency(d: Department, value: DepartmentCurrency | "") {
+    try {
+      await updateDepartmentCurrency(d.id, value || null);
+      toast.show("success", `Валюта «${d.name}»: ${value || "сом"}`);
+      reload();
+    } catch (e: any) {
+      toast.show("error", e.message);
     }
   }
 
@@ -62,13 +84,23 @@ export default function Departments() {
                   {d.employee_count} · {d.category_count}
                 </span>
               </div>
-              <button
-                className="danger"
-                style={{ padding: "6px 12px", fontSize: 13 }}
-                onClick={() => remove(d)}
-              >
-                Удалить
-              </button>
+              <div className="row" style={{ gap: 8, alignItems: "center" }}>
+                <select
+                  value={d.currency || ""}
+                  onChange={(e) => changeCurrency(d, e.target.value as DepartmentCurrency | "")}
+                  title="Валюта подразделения: профиль сотрудников и новые расходы"
+                  style={{ fontSize: 13, padding: "6px 8px" }}
+                >
+                  {CURRENCY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
+                <button
+                  className="danger"
+                  style={{ padding: "6px 12px", fontSize: 13 }}
+                  onClick={() => remove(d)}
+                >
+                  Удалить
+                </button>
+              </div>
             </div>
           </div>
         ))}
@@ -95,6 +127,12 @@ export default function Departments() {
                   autoFocus
                   placeholder="Например: AVA Pay"
                 />
+              </div>
+              <div>
+                <label>Валюта подразделения</label>
+                <select value={currency} onChange={(e) => setCurrency(e.target.value as DepartmentCurrency | "")}>
+                  {CURRENCY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                </select>
               </div>
               <div className="row" style={{ justifyContent: "flex-end" }}>
                 <button type="button" className="ghost" onClick={() => setAdding(false)}>Отмена</button>

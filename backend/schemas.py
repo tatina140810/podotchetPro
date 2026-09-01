@@ -239,8 +239,17 @@ class CategoryOut(CategoryBase):
 
 # ===================== DEPARTMENTS =====================
 
+DEPARTMENT_CURRENCIES = ("KGS", "USD", "EUR", "RUB")
+
+
 class DepartmentCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=200)
+    # Валюта подразделения; None = не задана (сомы).
+    currency: Optional[str] = Field(default=None, pattern="^(KGS|USD|EUR|RUB)$")
+
+
+class DepartmentUpdate(BaseModel):
+    currency: Optional[str] = Field(default=None, pattern="^(KGS|USD|EUR|RUB)$")
 
 
 class DepartmentOut(BaseModel):
@@ -249,6 +258,7 @@ class DepartmentOut(BaseModel):
     id: int
     org_id: int
     name: str
+    currency: Optional[str] = None
     created_at: datetime
     # Счётчики для страницы управления (заполняются в роутере).
     employee_count: int = 0

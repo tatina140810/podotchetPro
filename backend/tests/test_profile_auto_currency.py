@@ -115,3 +115,51 @@ def test_invalid_currency_rejected(client, m):
     r = client.get(f"/api/employees/{m.adik.id}/profile", params={**_now(), "currency": "GBP"},
                    headers=auth_headers(m.director))
     assert r.status_code == 422
+
+
+# ---------- валюта подразделения (Department.currency) ----------
+
+def set_dept_currency(client, director, dep_id, currency):
+    r = client.patch(f"/api/departments/{dep_id}", json={"currency": currency}, headers=auth_headers(director))
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def attach(m, user, dep):
+    from models import EmployeeDepartment
+    db = database.SessionLocal()
+    db.add(EmployeeDepartment(employee_id=user.id, department_id=dep.id)); db.commit(); db.close()
+
+
+def test_department_currency_wins_over_mixed_history(client, m):
+    """Мос офис = RUB: даже при смешанной истории (KGS+RUB) профиль в ₽."""
+    attach(m, m.adik, m.dep)
+    out = set_dept_currency(client, m.director, m.dep.id, "RUB")
+    assert out["currency"] == "RUB"
+    topup(client, m.director, m.adik, 10000, "RUB")
+    expense(client, m.adik, m.dep, m.cat, 900, "KGS")  # 900 с = 1000 ₽ по курсу 0.9
+    p = profile(client, m.director, m.adik.id)
+    assert p["currency"] == "RUB"
+    assert p["summary"]["received"]["total"] == 10000.0
+    assert p["summary"]["spent"]["total"] == 1000.0
+    assert p["expenses"][0]["currency"] == "KGS"  # исходная валюта строки сохранена
+
+    # снять валюту → эвристика → смешанная история → KGS
+    assert set_dept_currency(client, m.director, m.dep.id, None)["currency"] is None
+    assert profile(client, m.director, m.adik.id)["currency"] == "KGS"
+
+
+def test_department_currency_validation_and_rights(client, m):
+    r = client.patch(f"/api/departments/{m.dep.id}", json={"currency": "GBP"}, headers=auth_headers(m.director))
+    assert r.status_code == 422
+    r = client.patch(f"/api/departments/{m.dep.id}", json={"currency": "RUB"}, headers=auth_headers(m.adik))
+    assert r.status_code == 403  # подотчётный не управляет подразделениями
+    r = client.post("/api/departments", json={"name": "Питер", "currency": "RUB"}, headers=auth_headers(m.director))
+    assert r.status_code == 201 and r.json()["currency"] == "RUB"
+    # CHECK в БД: обход API с невалидной валютой отклоняется Postgres'ом
+    from sqlalchemy import text
+    from sqlalchemy.exc import IntegrityError
+    db = database.SessionLocal()
+    with pytest.raises(IntegrityError):
+        db.execute(text("update departments set currency='XXX' where id=:i"), {"i": m.dep.id}); db.commit()
+    db.rollback(); db.close()

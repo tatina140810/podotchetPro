@@ -870,7 +870,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
           </span>
           <button
             type="button"
-            className="ghost"
+            className="success"
             onClick={exportXlsx}
             disabled={exporting || !ops || total === 0}
             title="Выгрузить в Excel все операции по текущему фильтру"

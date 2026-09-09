@@ -8,7 +8,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
-import { api, uploadReceipt } from "../api/client";
+import { api, downloadFile, uploadReceipt } from "../api/client";
 import { useToast } from "../components/Toast";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { useAuth, type UserOut } from "../context/AuthContext";
@@ -712,6 +712,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
   // Выбрать ВСЕ строки по текущему фильтру (по всем страницам) — чтобы нижняя
   // плашка показала общую сумму. Тянем страницами по 200 до total.
   const [selectingAll, setSelectingAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
   async function selectAllFiltered() {
     setSelectingAll(true);
     try {
@@ -821,6 +822,22 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     });
   }
 
+  // Выгрузка в Excel по текущим фильтрам (все страницы, не только видимая).
+  async function exportXlsx() {
+    setExporting(true);
+    try {
+      const qs = buildFilterParams().toString();
+      const url = qs
+        ? `/api/admin/recent-operations/export.xlsx?${qs}`
+        : "/api/admin/recent-operations/export.xlsx";
+      await downloadFile(url, "operations.xlsx");
+    } catch (e: any) {
+      toast.show("error", e.message || "Не удалось скачать файл");
+    } finally {
+      setExporting(false);
+    }
+  }
+
   function resetFilters() {
     setEmployeeQuery(""); setEmployeeId(null);
     setCategoryId(null);
@@ -847,9 +864,21 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     <div className="card" style={{ marginTop: 24, paddingBottom: selected.size > 0 ? 96 : undefined }}>
       <div className="row between" style={{ marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
         <h2 className="h2" style={{ margin: 0 }}>Последние операции</h2>
-        <span className="muted" style={{ fontSize: 12 }}>
-          {ops ? `Стр ${page + 1} из ${totalPages} · всего ${total}` : "загрузка…"}
-        </span>
+        <div className="row" style={{ gap: 10, alignItems: "center" }}>
+          <span className="muted" style={{ fontSize: 12 }}>
+            {ops ? `Стр ${page + 1} из ${totalPages} · всего ${total}` : "загрузка…"}
+          </span>
+          <button
+            type="button"
+            className="ghost"
+            onClick={exportXlsx}
+            disabled={exporting || !ops || total === 0}
+            title="Выгрузить в Excel все операции по текущему фильтру"
+            style={{ padding: "6px 12px", fontSize: 13 }}
+          >
+            {exporting ? "Готовим…" : "Выгрузить в Excel"}
+          </button>
+        </div>
       </div>
 
       {/* Фильтры */}

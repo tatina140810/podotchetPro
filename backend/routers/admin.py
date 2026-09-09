@@ -1,10 +1,15 @@
 """Admin-режим — bulk import исторических данных + поиск/устранение дублей TopUp+Expense.
 Только admin. Каждая строка обрабатывается независимо (partial errors)."""
+import io
 from datetime import datetime, timedelta
 from decimal import Decimal
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -18,6 +23,7 @@ from schemas import (
     BulkImportResult,
 )
 from services.exchange import get_current_rate
+from services.plan_limits import ensure_can_export
 from services.permissions import (
     hidden_user_ids,
     member_active_workspace_id,
@@ -321,9 +327,11 @@ def fix_duplicate(
     }
 
 
-@router.get("/recent-operations")
-def recent_operations(
-    limit: int = 30,
+def _recent_operations_rows(
+    db: Session,
+    admin: User,
+    *,
+    limit: int,
     offset: int = 0,
     employee_id: Optional[int] = None,
     category_id: Optional[int] = None,
@@ -333,16 +341,15 @@ def recent_operations(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     kind: Optional[str] = None,
-    db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
-):
-    """Последние N операций org (Expense + Income + TopUp) с пагинацией и фильтрами.
+) -> tuple[list[dict], int]:
+    """Единая выборка «последних операций» (Expense + Income + TopUp + Request)
+    с фильтрами и правами. Используется и списком на экране импорта, и Excel-выгрузкой,
+    чтобы фильтры и видимость строк считались ровно одной формулой.
     employee_id: для expense=employee_id, income=received_by_id, topup=user_id.
     category_id: применяется только к Expense и TopUp (у Income нет категории —
     при выбранной категории Income исключаются).
     kind: фильтр по типу операции (expense | income | topup | request); None = все типы.
-    Возвращает {items, total, has_more}."""
-    limit = max(1, min(limit, 200))
+    Возвращает (строки среза [offset : offset+limit], total)."""
     offset = max(0, offset)
     # date_to включающий: до конца дня (фронт шлёт начало дня)
     date_to_exclusive = date_to + timedelta(days=1) if date_to else None
@@ -506,12 +513,166 @@ def recent_operations(
 
     # Сортируем по date desc, затем по kind+id для устойчивого порядка
     rows.sort(key=lambda r: (r["date"], r["kind"], r["id"]), reverse=True)
-    page = rows[offset : offset + limit]
+    return rows[offset : offset + limit], total
+
+
+@router.get("/recent-operations")
+def recent_operations(
+    limit: int = 30,
+    offset: int = 0,
+    employee_id: Optional[int] = None,
+    category_id: Optional[int] = None,
+    department_id: Optional[int] = None,
+    amount_min: Optional[float] = None,
+    amount_max: Optional[float] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    kind: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Последние N операций org с пагинацией и фильтрами. Возвращает {items, total, has_more}."""
+    limit = max(1, min(limit, 200))
+    offset = max(0, offset)
+    page, total = _recent_operations_rows(
+        db, admin,
+        limit=limit,
+        offset=offset,
+        employee_id=employee_id,
+        category_id=category_id,
+        department_id=department_id,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        date_from=date_from,
+        date_to=date_to,
+        kind=kind,
+    )
     return {
         "items": page,
         "total": total,
         "has_more": (offset + limit) < total,
     }
+
+
+# Потолок строк одной выгрузки: экспорт идёт одним запросом в память,
+# без него большой org мог бы уронить сервер на openpyxl.
+RECENT_OPS_EXPORT_MAX_ROWS = 10000
+
+_RECENT_OPS_KIND_RU = {
+    "expense": "Расход",
+    "income": "Приход",
+    "topup": "Выдача",
+    "request": "Заявка",
+}
+
+
+def _recent_op_counterparty(row: dict) -> str:
+    """«Кто / Кому» — ровно как в таблице на экране."""
+    who = row.get("who") or ""
+    issued_by = row.get("issued_by") or ""
+    if row["kind"] == "topup" and issued_by:
+        return f"{issued_by} -> {who or '—'}"
+    if row["kind"] == "request" and issued_by:
+        return f"{who or '?'} -> {issued_by}"
+    return who or "—"
+
+
+@router.get("/recent-operations/export.xlsx")
+def recent_operations_export(
+    employee_id: Optional[int] = None,
+    category_id: Optional[int] = None,
+    department_id: Optional[int] = None,
+    amount_min: Optional[float] = None,
+    amount_max: Optional[float] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    kind: Optional[str] = None,
+    db: Session = Depends(get_db),
+    admin: User = Depends(require_admin),
+):
+    """Excel-выгрузка «Последних операций» по ТЕМ ЖЕ фильтрам, что и на экране,
+    но по всем страницам сразу (до RECENT_OPS_EXPORT_MAX_ROWS строк)."""
+    ensure_can_export(db, admin)
+    rows, total = _recent_operations_rows(
+        db, admin,
+        limit=RECENT_OPS_EXPORT_MAX_ROWS,
+        offset=0,
+        employee_id=employee_id,
+        category_id=category_id,
+        department_id=department_id,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        date_from=date_from,
+        date_to=date_to,
+        kind=kind,
+    )
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Операции"
+
+    headers = ["Дата", "Тип", "Кто / Кому", "Сумма", "Валюта", "Категория / Источник", "Комментарий"]
+    ws.append(headers)
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="4F46E5")
+    for cell in ws[1]:
+        cell.font = header_font
+        cell.fill = header_fill
+
+    for r in rows:
+        try:
+            date_txt = datetime.fromisoformat(r["date"]).strftime("%d.%m.%Y")
+        except (TypeError, ValueError):
+            date_txt = (r.get("date") or "")[:10]
+        ws.append([
+            date_txt,
+            _RECENT_OPS_KIND_RU.get(r["kind"], r["kind"]),
+            _recent_op_counterparty(r),
+            float(r["amount"]) if r.get("amount") is not None else 0,
+            r.get("currency") or "",
+            r.get("category_name") or r.get("source") or "—",
+            r.get("description") or r.get("note") or "",
+        ])
+
+    # Подытоги по каждой валюте: единого SUM нет намеренно — в выгрузке валюты
+    # смешаны (KGS/USD/EUR/RUB) и складывать их вместе некорректно.
+    # Суммируем в Decimal (не во float) — накопление копеек в float даёт хвосты.
+    totals: dict[str, Decimal] = {}
+    for r in rows:
+        if r.get("amount") is None:
+            continue
+        cur = r.get("currency") or ""
+        totals[cur] = totals.get(cur, Decimal("0")) + Decimal(str(r["amount"]))
+    if totals:
+        ws.append([])
+        total_font = Font(bold=True)
+        for cur, tot in sorted(totals.items()):
+            ws.append(["", "", "ИТОГО", float(tot), cur, "", ""])
+            for cell in ws[ws.max_row]:
+                cell.font = total_font
+
+    if total > len(rows):
+        ws.append([])
+        ws.append(["", "", f"Показаны первые {len(rows)} из {total} операций — сузьте фильтр"])
+
+    widths = [12, 12, 30, 16, 8, 26, 44]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
+    for row_idx in range(2, ws.max_row + 1):
+        ws.cell(row=row_idx, column=4).number_format = '#,##0.00'
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    fname = f"operations_{datetime.now().strftime('%Y-%m-%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": f"attachment; filename=\"{fname}\"; filename*=UTF-8''{quote(fname)}",
+        },
+    )
 
 
 @router.post(

@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -22,7 +23,9 @@ from models import (
     EmployeeDepartment,
     EmployeeSpec,
     Expense,
+    ExpenseReceipt,
     MoneyRequest,
+    MoneyRequestReceipt,
     MoneyTransfer,
     Organization,
     User,
@@ -300,6 +303,20 @@ def get_user(user_id: int, db: Session = Depends(get_db), me: User = Depends(get
     return _with_balance(db, u)
 
 
+def _count_receipts(db: Session, fk_column, model, ids: list[int]) -> dict[int, int]:
+    """{id сущности: сколько прикреплено документов} одним запросом.
+    Пустой список id — без похода в БД."""
+    if not ids:
+        return {}
+    rows = (
+        db.query(fk_column, func.count(model.id))
+        .filter(fk_column.in_(set(ids)))
+        .group_by(fk_column)
+        .all()
+    )
+    return {key: cnt for key, cnt in rows}
+
+
 def build_user_history_entries(
     db: Session,
     org_id: int,
@@ -417,7 +434,7 @@ def build_user_history_entries(
         )
 
     # MoneyRequests approved (входящие — где u заявитель, исходящие — где u одобрил)
-    for r in (
+    req_in = (
         db.query(MoneyRequest)
         .filter(
             MoneyRequest.org_id == org_id,
@@ -425,7 +442,23 @@ def build_user_history_entries(
             MoneyRequest.status == "approved",
         )
         .all()
-    ):
+    )
+    req_out = (
+        db.query(MoneyRequest)
+        .filter(
+            MoneyRequest.org_id == org_id,
+            MoneyRequest.approver_id == u.id,
+            MoneyRequest.status == "approved",
+        )
+        .all()
+    )
+    req_receipts = _count_receipts(
+        db,
+        MoneyRequestReceipt.request_id,
+        MoneyRequestReceipt,
+        [r.id for r in req_in] + [r.id for r in req_out],
+    )
+    for r in req_in:
         entries.append(
             BalanceHistoryEntry(
                 kind="request_approved",
@@ -435,17 +468,10 @@ def build_user_history_entries(
                 note=r.title,
                 created_at=r.approved_at or r.updated_at,
                 ref_id=r.id,
+                receipts_count=req_receipts.get(r.id, 0),
             )
         )
-    for r in (
-        db.query(MoneyRequest)
-        .filter(
-            MoneyRequest.org_id == org_id,
-            MoneyRequest.approver_id == u.id,
-            MoneyRequest.status == "approved",
-        )
-        .all()
-    ):
+    for r in req_out:
         entries.append(
             BalanceHistoryEntry(
                 kind="request_approved_out",
@@ -455,11 +481,12 @@ def build_user_history_entries(
                 note=r.title,
                 created_at=r.approved_at or r.updated_at,
                 ref_id=r.id,
+                receipts_count=req_receipts.get(r.id, 0),
             )
         )
 
     # Expenses (approved + pending — оба влияют на баланс)
-    for e in (
+    expenses = (
         db.query(Expense)
         .filter(
             Expense.org_id == org_id,
@@ -467,7 +494,17 @@ def build_user_history_entries(
             Expense.status.in_(("approved", "pending")),
         )
         .all()
-    ):
+    )
+    # Чеки расходов — одним запросом на всю пачку (иначе N+1 на раскрытии строки).
+    exp_receipts = _count_receipts(
+        db, ExpenseReceipt.expense_id, ExpenseReceipt, [e.id for e in expenses]
+    )
+    for e in expenses:
+        # Старые расходы могли хранить единственный чек в legacy-поле receipt_url,
+        # не продублированный в expense_receipts — он тоже считается чеком.
+        cnt = exp_receipts.get(e.id, 0)
+        if cnt == 0 and e.receipt_url:
+            cnt = 1
         entries.append(
             BalanceHistoryEntry(
                 kind="expense",
@@ -477,6 +514,7 @@ def build_user_history_entries(
                 note=e.description,
                 created_at=e.spent_at,
                 ref_id=e.id,
+                receipts_count=cnt,
             )
         )
 

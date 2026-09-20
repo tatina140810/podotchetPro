@@ -19,6 +19,16 @@ export interface MoneyRequestItemIn {
   quantity?: number;
 }
 
+export interface MoneyRequestReceipt {
+  id: number;
+  request_id: number;
+  file_url: string;
+  file_name: string | null;
+  uploaded_by_id: number;
+  uploaded_by_name: string | null;
+  created_at: string;
+}
+
 export interface MoneyRequest {
   id: number;
   org_id: number;
@@ -40,6 +50,7 @@ export interface MoneyRequest {
   updated_at: string;
   approved_at: string | null;
   items: MoneyRequestItem[];
+  receipts: MoneyRequestReceipt[];
 }
 
 export function listRequests(params: {
@@ -119,4 +130,25 @@ export function rejectRequest(id: number, comment: string) {
 
 export function deleteRequest(id: number) {
   return api<void>(`/api/requests/${id}`, { method: "DELETE" });
+}
+
+/** Чеки/документы одобренной заявки. Файл сначала грузится через uploadReceipt
+ *  (общий эндпоинт загрузки), сюда привязывается уже полученный url. */
+export function listRequestReceipts(requestId: number): Promise<MoneyRequestReceipt[]> {
+  return api<MoneyRequestReceipt[]>(`/api/requests/${requestId}/receipts`);
+}
+
+export function addRequestReceipt(
+  requestId: number,
+  file_url: string,
+  file_name: string | null,
+): Promise<MoneyRequestReceipt> {
+  return api<MoneyRequestReceipt>(`/api/requests/${requestId}/receipts`, {
+    method: "POST",
+    body: { file_url, file_name },
+  });
+}
+
+export function deleteRequestReceipt(requestId: number, receiptId: number): Promise<void> {
+  return api<void>(`/api/requests/${requestId}/receipts/${receiptId}`, { method: "DELETE" });
 }

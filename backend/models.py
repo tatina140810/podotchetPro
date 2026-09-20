@@ -545,6 +545,11 @@ class MoneyRequest(Base):
     items: Mapped[list["MoneyRequestItem"]] = relationship(
         back_populates="request", cascade="all,delete-orphan"
     )
+    receipts: Mapped[list["MoneyRequestReceipt"]] = relationship(
+        back_populates="request",
+        cascade="all,delete-orphan",
+        order_by="MoneyRequestReceipt.created_at",
+    )
 
 
 class MoneyRequestItem(Base):
@@ -563,6 +568,28 @@ class MoneyRequestItem(Base):
 
     request: Mapped[MoneyRequest] = relationship(back_populates="items")
     category: Mapped[Optional[Category]] = relationship()
+
+
+class MoneyRequestReceipt(Base):
+    """Прикреплённый к заявке документ (чек, накладная, счёт). У одной заявки
+    может быть несколько. Крепятся к ОДОБРЕННОЙ заявке — подтверждение, что
+    одобренные деньги потрачены. Удалить может тот, кто загрузил, и директор."""
+    __tablename__ = "money_request_receipts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    request_id: Mapped[int] = mapped_column(
+        ForeignKey("money_requests.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    file_url: Mapped[str] = mapped_column(String(500), nullable=False)
+    file_name: Mapped[Optional[str]] = mapped_column(String(255))
+    uploaded_by_id: Mapped[int] = mapped_column(ForeignKey("users.id"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+
+    request: Mapped[MoneyRequest] = relationship(back_populates="receipts")
+    uploaded_by: Mapped[User] = relationship(foreign_keys=[uploaded_by_id])
 
 
 class MoneyTransfer(Base, SoftDeleteMixin):

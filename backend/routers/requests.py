@@ -20,6 +20,7 @@ from models import (
     Expense,
     MoneyRequest,
     MoneyRequestItem,
+    MoneyRequestReceipt,
     Notification,
     User,
 )
@@ -28,6 +29,8 @@ from schemas import (
     MoneyRequestItemIn,
     MoneyRequestItemOut,
     MoneyRequestOut,
+    MoneyRequestReceiptCreate,
+    MoneyRequestReceiptOut,
     MoneyRequestReject,
     MoneyRequestUpdate,
 )
@@ -69,6 +72,12 @@ def _item_to_out(it: MoneyRequestItem) -> MoneyRequestItemOut:
     return out
 
 
+def _receipt_to_out(r: MoneyRequestReceipt) -> MoneyRequestReceiptOut:
+    out = MoneyRequestReceiptOut.model_validate(r)
+    out.uploaded_by_name = r.uploaded_by.name if r.uploaded_by else None
+    return out
+
+
 def _to_out(req: MoneyRequest) -> MoneyRequestOut:
     out = MoneyRequestOut.model_validate(req)
     out.requester_name = req.requester.name if req.requester else None
@@ -76,6 +85,7 @@ def _to_out(req: MoneyRequest) -> MoneyRequestOut:
     out.expense_category_name = req.expense_category.name if req.expense_category else None
     out.department_name = req.department.name if req.department else None
     out.items = [_item_to_out(it) for it in req.items]
+    out.receipts = [_receipt_to_out(r) for r in req.receipts]
     return out
 
 
@@ -597,5 +607,92 @@ def delete_request(
                 "Удалять можно только draft или rejected (одобренные — финансовый след)",
             )
     db.delete(req)
+    db.commit()
+    return None
+
+
+# ===================== Чеки/документы к заявке =====================
+# Файл сначала грузится через POST /api/expenses/upload-receipt (возвращает url),
+# затем привязывается сюда. Крепятся к ОДОБРЕННОЙ заявке: она означает, что деньги
+# выданы, и к ней прикладываются подтверждающие документы (несколько на заявку).
+
+
+def _load_request_visible(db: Session, me: User, request_id: int) -> MoneyRequest:
+    req = db.get(MoneyRequest, request_id)
+    if not req or req.org_id != me.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+    _check_visible(req, me)
+    return req
+
+
+@router.get("/{request_id}/receipts", response_model=List[MoneyRequestReceiptOut])
+def list_request_receipts(
+    request_id: int,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    req = _load_request_visible(db, me, request_id)
+    return [_receipt_to_out(r) for r in req.receipts]
+
+
+@router.post(
+    "/{request_id}/receipts",
+    response_model=MoneyRequestReceiptOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def add_request_receipt(
+    request_id: int,
+    payload: MoneyRequestReceiptCreate,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """Прикрепить документ к одобренной заявке. Может заявитель, адресат
+    (кто одобрил) и директор-уровень. Аудитор — read-only."""
+    req = _load_request_visible(db, me, request_id)
+    if req.status != "approved":
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Прикреплять документы можно только к одобренной заявке",
+        )
+    allowed = is_director_level(me) or me.id in (req.requester_id, req.approver_id)
+    if not allowed:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Прикреплять документы может заявитель, адресат заявки или директор",
+        )
+    r = MoneyRequestReceipt(
+        org_id=req.org_id,
+        request_id=req.id,
+        file_url=payload.file_url,
+        file_name=payload.file_name,
+        uploaded_by_id=me.id,
+    )
+    db.add(r)
+    db.commit()
+    db.refresh(r)
+    return _receipt_to_out(r)
+
+
+@router.delete(
+    "/{request_id}/receipts/{receipt_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_request_receipt(
+    request_id: int,
+    receipt_id: int,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """Удалить документ. Директор — любой; остальные — только тот, который
+    загрузили сами (чтобы нельзя было убрать чужое подтверждение)."""
+    req = _load_request_visible(db, me, request_id)
+    r = db.get(MoneyRequestReceipt, receipt_id)
+    if not r or r.request_id != req.id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Документ не найден")
+    if not is_director_level(me) and r.uploaded_by_id != me.id:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN, "Удалить можно только свой документ"
+        )
+    db.delete(r)
     db.commit()
     return None

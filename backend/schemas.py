@@ -653,6 +653,24 @@ class MoneyRequestReject(BaseModel):
     comment: str = Field(..., min_length=1, max_length=2000)
 
 
+class MoneyRequestReceiptCreate(BaseModel):
+    """Привязка уже загруженного файла (url из POST /api/expenses/upload-receipt)."""
+    file_url: str = Field(..., max_length=500)
+    file_name: Optional[str] = Field(default=None, max_length=255)
+
+
+class MoneyRequestReceiptOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    request_id: int
+    file_url: str
+    file_name: Optional[str] = None
+    uploaded_by_id: int
+    uploaded_by_name: Optional[str] = None
+    created_at: datetime
+
+
 class MoneyRequestOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
@@ -676,6 +694,7 @@ class MoneyRequestOut(BaseModel):
     updated_at: datetime
     approved_at: Optional[datetime] = None
     items: List[MoneyRequestItemOut] = Field(default_factory=list)
+    receipts: List[MoneyRequestReceiptOut] = Field(default_factory=list)
 
 
 # ===================== MONEY TRANSFERS =====================
@@ -773,6 +792,9 @@ class BalanceHistoryEntry(BaseModel):
     note: Optional[str] = None
     created_at: datetime
     ref_id: Optional[int] = None  # id связанной записи (заявки/перевода/расхода)
+    # Сколько чеков/документов прикреплено. None = к этому типу операции чеки
+    # не крепятся (выдача, приход, перевод) — в отчёте показывается прочерк.
+    receipts_count: Optional[int] = None
 
 
 class UserBalanceDetails(BaseModel):

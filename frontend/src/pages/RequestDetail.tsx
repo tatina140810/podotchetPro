@@ -9,8 +9,10 @@ import {
   rejectRequest,
   submitRequest,
   type MoneyRequest,
+  type MoneyRequestReceipt,
   type RequestStatus,
 } from "../api/requests";
+import { RequestReceipts } from "../components/RequestReceipts";
 
 const STATUS_RU: Record<RequestStatus, string> = {
   draft: "Черновик",
@@ -59,6 +61,11 @@ export default function RequestDetail() {
   const canSubmit = isMine && req.status === "draft";
   const canApprove = isApprover && req.status === "pending";
   const canDelete = isMine && (req.status === "draft" || req.status === "rejected");
+  // Чеки: только у одобренной заявки. Крепить — заявитель, адресат, директор
+  // (то же правило продублировано на бэкенде). Удалять — свой документ; директор — любой.
+  const isDirector = user?.role === "superadmin" || user?.role === "admin" || user?.role === "gen_director";
+  const showReceipts = req.status === "approved";
+  const canAttach = showReceipts && (isMine || isApprover || isDirector);
 
   async function doSubmit() {
     setBusy(true);
@@ -195,6 +202,16 @@ export default function RequestDetail() {
             <span>{req.approver_name}</span>
           </div>
         </div>
+      )}
+
+      {showReceipts && (
+        <RequestReceipts
+          requestId={requestId}
+          receipts={req.receipts || []}
+          canAttach={canAttach}
+          canDelete={(r: MoneyRequestReceipt) => isDirector || r.uploaded_by_id === user?.id}
+          onChanged={(receipts) => setReq((prev) => (prev ? { ...prev, receipts } : prev))}
+        />
       )}
 
       <h2 className="h2" style={{ marginTop: 18 }}>Строки</h2>

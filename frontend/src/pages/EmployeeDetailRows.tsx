@@ -24,6 +24,7 @@ export default function EmployeeDetailRows({ entries }: { entries: any[] | null 
           <th>Кто/Категория</th>
           <th style={{ textAlign: "right" }}>Сумма</th>
           <th>Описание</th>
+          <th style={{ width: 90 }}>Чеки</th>
         </tr>
       </thead>
       <tbody>
@@ -45,6 +46,17 @@ export default function EmployeeDetailRows({ entries }: { entries: any[] | null 
                 {amt > 0 ? "+" : ""}{amt.toLocaleString("ru-RU")} {symNative}
               </td>
               <td className="muted" style={{ fontSize: 12 }}>{d.note || ""}</td>
+              <td style={{ fontSize: 12 }}>
+                {d.receipts_count == null ? (
+                  <span className="muted">—</span>
+                ) : d.receipts_count > 0 ? (
+                  <span style={{ color: "var(--success)", fontWeight: 600 }}>
+                    есть{d.receipts_count > 1 ? ` · ${d.receipts_count}` : ""}
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--danger)", fontWeight: 600 }}>нет</span>
+                )}
+              </td>
             </tr>
           );
         })}

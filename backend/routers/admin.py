@@ -1,5 +1,10 @@
 """Admin-режим — bulk import исторических данных + поиск/устранение дублей TopUp+Expense.
-Только admin. Каждая строка обрабатывается независимо (partial errors)."""
+Каждая строка обрабатывается независимо (partial errors).
+
+Доступ к импорту: admin/superadmin — полный. Сотрудник с флагом users.can_bulk_import —
+урезанный: только СВОИ расходы (тип expense, employee = он сам); приходы и выдачи
+запрещены, иначе сотрудник мог бы нарисовать себе поступление денег. Остальное
+(включая статус approved у импортированных расходов) — как у админского импорта."""
 import io
 from datetime import datetime, timedelta
 from decimal import Decimal
@@ -13,7 +18,7 @@ from openpyxl.styles import Font, PatternFill
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from auth import require_admin
+from auth import require_admin, require_bulk_import
 from database import get_db
 from models import BalanceTopUp, Category, Department, Expense, ExpenseReceipt, Income, IncomeSource, MoneyRequest, User
 from schemas import (
@@ -25,6 +30,7 @@ from schemas import (
 from services.exchange import get_current_rate
 from services.plan_limits import ensure_can_export
 from services.permissions import (
+    department_forbidden,
     hidden_user_ids,
     member_active_workspace_id,
     owner_isolation_ws_id,
@@ -75,6 +81,13 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
     amount_kgs = _resolve_amount_kgs(db, admin.org_id, item.amount, item.currency)
     if amount_kgs is None:
         raise ValueError(f"Курс {item.currency}/KGS не установлен")
+    # Чеки строки: новый формат (список) + legacy-поле одиночного чека.
+    receipts: list[tuple[str, Optional[str]]] = []
+    if item.receipt_url:
+        receipts.append((item.receipt_url, None))
+    for r in item.receipts or []:
+        if r.url and all(r.url != u for u, _ in receipts):
+            receipts.append((r.url, r.name))
     e = Expense(
         org_id=admin.org_id,
         employee_id=employee.id,
@@ -90,19 +103,21 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         # Помечаем по УЧАСТНИКУ-сотруднику (его пространство), а не по импортёру.
         workspace_id=member_active_workspace_id(db, employee.id, admin.org_id),
         is_personal_contribution=bool(item.is_personal_contribution),
-        receipt_url=item.receipt_url,
+        receipt_url=receipts[0][0] if receipts else None,  # legacy-поле = первый чек
         spent_at=item.date or datetime.utcnow(),
     )
     db.add(e)
-    # Чек/документ, если приложен: дублируем в expense_receipts (единый источник галереи).
-    if item.receipt_url:
+    # Чеки/документы, если приложены: дублируем в expense_receipts (единый источник галереи).
+    if receipts:
         db.flush()  # нужен e.id
-        db.add(ExpenseReceipt(
-            org_id=admin.org_id,
-            expense_id=e.id,
-            file_url=item.receipt_url,
-            uploaded_by_id=employee.id,
-        ))
+        for url, name in receipts:
+            db.add(ExpenseReceipt(
+                org_id=admin.org_id,
+                expense_id=e.id,
+                file_url=url,
+                file_name=name,
+                uploaded_by_id=employee.id,
+            ))
 
 
 def _create_income(db: Session, admin: User, item: BulkImportItem) -> None:
@@ -675,6 +690,20 @@ def recent_operations_export(
     )
 
 
+def _enforce_self_import(db: Session, me: User, item: BulkImportItem) -> None:
+    """Ограничения импорта для сотрудника с флагом (не admin/superadmin):
+    только свои расходы. Проверка в сервисе, а не в UI."""
+    if me.role in ("admin", "superadmin"):
+        return
+    if item.type != "expense":
+        raise ValueError("Можно импортировать только расходы")
+    if item.user_id is not None and item.user_id != me.id:
+        raise ValueError("Можно импортировать только свои расходы")
+    item.user_id = me.id
+    if item.department_id is not None and department_forbidden(db, me, item.department_id):
+        raise ValueError(f"Подразделение id={item.department_id} не найдено")
+
+
 @router.post(
     "/bulk-import",
     response_model=BulkImportResult,
@@ -683,10 +712,13 @@ def recent_operations_export(
 def bulk_import(
     payload: BulkImportPayload,
     db: Session = Depends(get_db),
-    admin: User = Depends(require_admin),
+    admin: User = Depends(require_bulk_import),
 ):
     """Импорт массива операций. Каждая строка — своя мини-транзакция:
     при ошибке откатывается только она, остальные продолжают.
+
+    Сотруднику с флагом can_bulk_import доступны только свои расходы —
+    см. _enforce_self_import.
     """
     created = 0
     errors: list[BulkImportError] = []
@@ -696,6 +728,7 @@ def bulk_import(
             errors.append(BulkImportError(index=idx, error=f"Неизвестный type: {item.type}"))
             continue
         try:
+            _enforce_self_import(db, admin, item)
             handler(db, admin, item)
             db.commit()
             created += 1

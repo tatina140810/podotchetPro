@@ -8,6 +8,8 @@ export interface Department {
   name: string;
   /** Валюта подразделения; null = сомы. Влияет на валюту профиля и форм. */
   currency: DepartmentCurrency | null;
+  /** Владелец личного подразделения; null = обычное общее подразделение. */
+  owner_id: number | null;
   created_at: string;
   employee_count: number;
   category_count: number;

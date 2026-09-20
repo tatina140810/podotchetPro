@@ -3,6 +3,7 @@ import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
 import { listDepartments, type Department } from "../api/departments";
+import { isDirectorOrAuditor, useAuth } from "../context/AuthContext";
 
 interface ExpenseItem {
   id: number;
@@ -45,6 +46,11 @@ const MONTH_RU_FULL = [
 
 export default function CategoryReport() {
   const toast = useToast();
+  const { user } = useAuth();
+  // Личный режим: сотрудник с правом на свои отчёты. Бэкенд отдаёт только его
+  // расходы и не считает приходы организации — поэтому блок «приход/результат»
+  // и подпись про имена сотрудников не показываем.
+  const personal = !isDirectorOrAuditor(user?.role);
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -183,7 +189,9 @@ export default function CategoryReport() {
   return (
     <div className="container">
       <div className="row between" style={{ marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
-        <h1 className="h1" style={{ margin: 0 }}>Отчёт по категориям</h1>
+        <h1 className="h1" style={{ margin: 0 }}>
+          {personal ? "Мои расходы по категориям" : "Отчёт по категориям"}
+        </h1>
         <div className="row" style={{ gap: 8, flexWrap: "wrap" }}>
           <button type="button" onClick={onExport} disabled={exporting || !data}
             style={{ background: "#107C41", color: "#fff" }}>
@@ -216,7 +224,8 @@ export default function CategoryReport() {
             </select>
           </div>
           <div className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
-            Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b>. Без имён сотрудников — только цифры.
+            Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b>.{" "}
+            {personal ? "Только ваши расходы." : "Без имён сотрудников — только цифры."}
           </div>
         </div>
       </div>
@@ -230,22 +239,27 @@ export default function CategoryReport() {
           {renderSection("Прочие расходы", data.other, data.other_subtotal, "other")}
 
           <div className="card" style={{ marginTop: 16, padding: 16 }}>
-            <div className="row between" style={{ marginBottom: 6 }}>
+            <div className="row between" style={{ marginBottom: personal ? 0 : 6 }}>
               <span>Итого расход:</span>
               <b style={{ color: "var(--danger)" }}>{data.total_expenses.toLocaleString("ru-RU")} {sym}</b>
             </div>
-            <div className="row between" style={{ marginBottom: 6 }}>
-              <span>Итого приход:</span>
-              <b style={{ color: "var(--success)" }}>{data.total_income.toLocaleString("ru-RU")} {sym}</b>
-            </div>
-            <hr />
-            <div className="row between" style={{ fontSize: 18, fontWeight: 700 }}>
-              <span>Результат периода:</span>
-              <span style={{ color: data.result >= 0 ? "var(--success)" : "var(--danger)" }}>
-                {data.result >= 0 ? "+" : ""}{data.result.toLocaleString("ru-RU")} {sym}
-                {data.result >= 0 ? "" : ""}
-              </span>
-            </div>
+            {/* Приходы организации сотруднику не показываем — в личном режиме
+                бэкенд их и не считает (total_income = 0). */}
+            {!personal && (
+              <>
+                <div className="row between" style={{ marginBottom: 6 }}>
+                  <span>Итого приход:</span>
+                  <b style={{ color: "var(--success)" }}>{data.total_income.toLocaleString("ru-RU")} {sym}</b>
+                </div>
+                <hr />
+                <div className="row between" style={{ fontSize: 18, fontWeight: 700 }}>
+                  <span>Результат периода:</span>
+                  <span style={{ color: data.result >= 0 ? "var(--success)" : "var(--danger)" }}>
+                    {data.result >= 0 ? "+" : ""}{data.result.toLocaleString("ru-RU")} {sym}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
         </>
       )}

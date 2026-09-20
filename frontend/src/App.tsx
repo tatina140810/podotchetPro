@@ -165,6 +165,25 @@ function RoleRoutes() {
       <Route path="/" element={<MyDashboard />} />
       <Route path="/my-expenses" element={<MyExpenses />} />
       <Route path="/my-history" element={<MyHistory />} />
+      {/* Свои отчёты (флаг can_view_own_reports): те же страницы, что у директора,
+          но данные бэкенд режет до расходов самого сотрудника. */}
+      {user.can_view_own_reports && (
+        <Route path="/reports/categories" element={<CategoryReport />} />
+      )}
+      {user.can_view_own_reports && (
+        <Route path="/reports/departments" element={<ReportsDepartments />} />
+      )}
+      {user.can_view_own_reports && (
+        <Route path="/reports/departments/:id" element={<DepartmentDetail />} />
+      )}
+      {/* Свои (личные) подразделения — та же страница управления, что у админа. */}
+      {user.can_create_departments && (
+        <Route path="/my-departments" element={<Departments />} />
+      )}
+      {/* Импорт истории — та же страница, но бэкенд принимает только свои расходы. */}
+      {user.can_bulk_import && (
+        <Route path="/admin/bulk-import" element={<BulkImport />} />
+      )}
       <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
       <Route path="/expenses/new" element={<NewExpense />} />
       <Route path="/my-subordinates" element={<MySubordinates />} />

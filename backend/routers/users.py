@@ -632,6 +632,14 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
             status.HTTP_403_FORBIDDEN,
             "Менять конфиденциальность может только superadmin",
         )
+    # Личные отчёты / личные подразделения — тоже только superadmin: это
+    # расширение прав сотрудника, обычный admin его выдавать не должен.
+    if (("can_view_own_reports" in data or "can_create_departments" in data
+         or "can_bulk_import" in data) and admin.role != "superadmin"):
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            "Менять права на свои отчёты, подразделения и импорт может только superadmin",
+        )
     # Назначать роль superadmin (или менять роль существующего superadmin) может
     # ТОЛЬКО superadmin — иначе обычный admin эскалировал бы права.
     if "role" in data and (data["role"] == "superadmin" or u.role == "superadmin") and admin.role != "superadmin":

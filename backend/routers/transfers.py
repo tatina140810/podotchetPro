@@ -28,6 +28,7 @@ from services.balance import compute_current_balance, load_org_rates
 from services.exchange import get_current_rate
 from services.soft_delete import soft_delete
 from services.permissions import (
+    department_forbidden,
     member_active_workspace_id,
     owner_isolation_ws_id,
     workspace_member_ids,
@@ -369,7 +370,8 @@ def topup_user(
 
     if payload.department_id is not None:
         dep = db.get(Department, payload.department_id)
-        if not dep or dep.org_id != admin.org_id:
+        if (not dep or dep.org_id != admin.org_id
+                or department_forbidden(db, admin, payload.department_id)):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
 
     # «Кто выдал»: по умолчанию текущий пользователь; для «передал дальше» из профиля
@@ -490,7 +492,8 @@ def update_topup(
         t.admin_id = data["admin_id"]
     if "department_id" in data and data["department_id"] is not None:
         dep = db.get(Department, data["department_id"])
-        if not dep or dep.org_id != admin.org_id:
+        if (not dep or dep.org_id != admin.org_id
+                or department_forbidden(db, admin, data["department_id"])):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
         t.department_id = data["department_id"]
     for f in ("amount", "note", "date", "category_id", "currency"):

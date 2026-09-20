@@ -80,6 +80,13 @@ class Department(Base):
     # Валюта подразделения (NULL = не задана → сомы). Пример: «Мос офис» = RUB —
     # профиль сотрудников показывается в ₽, новые расходы по умолчанию в RUB.
     currency: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    # Владелец ЛИЧНОГО подразделения. NULL = обычное общее подразделение org
+    # (все существующие — такие). NOT NULL = личное: видно только владельцу и
+    # superadmin/gen_director (оверсайт); другие сотрудники его не видят в списках
+    # и не могут выбрать в расходе/заявке/переводе.
+    owner_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     organization: Mapped[Organization] = relationship(back_populates="departments")
@@ -154,6 +161,22 @@ class User(Base):
     # Владелец платформы: доступ к супер-админ-панели (создание/удаление организаций,
     # смена плана). ОТЛИЧАЕТСЯ от role=superadmin (та — org-уровневая). Ставится вручную.
     is_platform_owner: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
+    # Свои отчёты: сотрудник (accountable) видит «Отчёт по категориям» и «Отчёт по
+    # подразделениям», построенные ТОЛЬКО по его расходам (внесённым им или на него).
+    # Ставит superadmin/gen_director. По умолчанию выключено — прежнее поведение.
+    can_view_own_reports: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
+    # Свои подразделения: сотрудник может завести личное подразделение
+    # (departments.owner_id = его id), видимое только ему и директорам.
+    can_create_departments: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
+    # Импорт истории: сотрудник может massово вносить СВОИ прошлые расходы
+    # (только тип expense и только на себя). Приходы/выдачи ему недоступны.
+    can_bulk_import: Mapped[bool] = mapped_column(
         Boolean, default=False, server_default=sa.text("false"), nullable=False
     )
     # Непосредственный руководитель: кому accountable отправляет заявки и от кого получает переводы.

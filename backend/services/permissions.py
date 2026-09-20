@@ -7,11 +7,13 @@ from sqlalchemy.orm import Session
 from auth import (
     can_manage_workspaces,
     can_see_confidential,
+    can_see_personal_departments,
     is_director_or_auditor,
 )
 from models import (
     BalanceTopUp,
     Category,
+    Department,
     EmployeeDepartment,
     Expense,
     Organization,
@@ -261,3 +263,63 @@ def masked_workspace_category_ids(db: Session, org_id: int) -> set[int]:
         .all()
     )
     return {cid for (cid,) in rows}
+
+
+# ===================== Личные подразделения сотрудника =====================
+# departments.owner_id IS NULL → обычное общее подразделение (все прежние — такие).
+# departments.owner_id = X    → личное подразделение сотрудника X: из рядовых
+# сотрудников его видит только сам X; директор/админ/аудитор видят все (иначе
+# расходы пришлось бы вырезать из общих отчётов и суммы бы не сошлись).
+# Другие сотрудники не видят его в списках и не могут выбрать в расходе/заявке/
+# выдаче — проверка в сервисе, не только в UI.
+
+
+def hidden_department_ids(db: Session, me: User) -> set[int]:
+    """id ЧУЖИХ личных подразделений — их me не должен видеть и выбирать.
+    Пустой set для директора/админа/аудитора — они видят все."""
+    if can_see_personal_departments(me):
+        return set()
+    rows = (
+        db.query(Department.id)
+        .filter(
+            Department.org_id == me.org_id,
+            Department.owner_id.isnot(None),
+            Department.owner_id != me.id,
+        )
+        .all()
+    )
+    return {did for (did,) in rows}
+
+
+def department_forbidden(db: Session, me: User, department_id: Optional[int]) -> bool:
+    """True, если me не вправе использовать это подразделение (чужое личное).
+    None и обычные общие подразделения — всегда разрешены."""
+    if department_id is None:
+        return False
+    dep = db.get(Department, department_id)
+    if dep is None or dep.owner_id is None:
+        return False
+    if can_see_personal_departments(me):
+        return False
+    return dep.owner_id != me.id
+
+
+def can_edit_department(db: Session, me: User, dep: Department) -> bool:
+    """Может ли me менять/удалять это подразделение: владелец — своё личное."""
+    return dep.owner_id is not None and dep.owner_id == me.id
+
+
+# ===================== Личный отчёт сотрудника =====================
+
+
+def personal_report_user_id(db: Session, me: User) -> Optional[int]:
+    """id сотрудника, которым ограничен отчёт, или None (полный доступ по org).
+
+    - директор/аудитор → None (обычный отчёт по организации, прежнее поведение);
+    - сотрудник с can_view_own_reports → его id: в отчёт попадают ТОЛЬКО расходы,
+      где он плательщик (employee_id) или он же внёс запись (recorded_by_id),
+      и только выдачи, полученные им.
+    """
+    if is_director_or_auditor(me):
+        return None
+    return me.id

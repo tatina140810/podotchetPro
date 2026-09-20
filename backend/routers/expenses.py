@@ -48,6 +48,7 @@ from services.exchange import get_current_rate
 from services.soft_delete import soft_delete
 from services.permissions import (
     auditor_department_ids,
+    department_forbidden,
     dept_out_of_scope,
     hidden_user_ids,
     member_active_workspace_id,
@@ -127,6 +128,7 @@ def _to_out(e: Expense) -> ExpenseOut:
 def list_expenses(
     employee_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     status_filter: Optional[str] = Query(default=None, alias="status", pattern="^(pending|approved|rejected)$"),
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
@@ -149,6 +151,11 @@ def list_expenses(
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
         q = q.filter(Expense.category_id == category_id)
+    if department_id:
+        # Чужое личное подразделение выбрать нельзя (для сотрудника его не существует).
+        if department_forbidden(db, me, department_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к этому подразделению")
+        q = q.filter(Expense.department_id == department_id)
     if status_filter:
         q = q.filter(Expense.status == status_filter)
     if date_from:
@@ -166,6 +173,7 @@ _STATUS_RU = {"pending": "На проверке", "approved": "Принят", "r
 def export_expenses_xlsx(
     employee_id: Optional[int] = None,
     category_id: Optional[int] = None,
+    department_id: Optional[int] = None,
     status_filter: Optional[str] = Query(default=None, alias="status", pattern="^(pending|approved|rejected)$"),
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
@@ -188,6 +196,11 @@ def export_expenses_xlsx(
         q = q.filter(Expense.employee_id == employee_id)
     if category_id:
         q = q.filter(Expense.category_id == category_id)
+    if department_id:
+        # Чужое личное подразделение выбрать нельзя (для сотрудника его не существует).
+        if department_forbidden(db, me, department_id):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к этому подразделению")
+        q = q.filter(Expense.department_id == department_id)
     if status_filter:
         q = q.filter(Expense.status == status_filter)
     if date_from:
@@ -328,6 +341,9 @@ def create_expense(
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
     dep = db.get(Department, department_id)
     if not dep or dep.org_id != me.org_id:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+    # Личное подразделение чужого сотрудника выбрать нельзя — для me его не существует.
+    if department_forbidden(db, me, department_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
     # Подотчётный может выбрать ЛЮБОЕ подразделение своей организации (как и предполагает
     # выпадающий список с all=true и путь редактирования расхода): сотрудник не всегда
@@ -527,6 +543,8 @@ def _apply_expense_fields(db: Session, e: Expense, data: dict, me: User) -> None
     депозита. Без проверки прав и статус-логики (их делает вызывающий)."""
     if data.get("department_id") is not None:
         dep = db.get(Department, data["department_id"])
+        if department_forbidden(db, me, data["department_id"]):
+            dep = None  # чужое личное подразделение — как несуществующее
         if not dep or dep.org_id != me.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
     if data.get("is_personal_contribution") and e.expense_type == "transfer":

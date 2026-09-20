@@ -34,6 +34,7 @@ from schemas import (
 from services.push_service import build_payload, send_push_to_user_sync
 from services.permissions import (
     auditor_department_ids,
+    department_forbidden,
     dept_out_of_scope,
     member_active_workspace_id,
     owner_isolation_ws_id,
@@ -46,7 +47,11 @@ router = APIRouter(prefix="/api/requests", tags=["requests"])
 
 # ===================== Хелперы =====================
 
-CAN_CREATE_ROLES = ("accountable", "auditor")  # admin/gen_director обычно не создают заявки
+# Заявку на деньги может подать ЛЮБОЙ активный сотрудник org (2026-09-17).
+# Раньше было ограничение ("accountable", "auditor") — но админы тоже запрашивают
+# средства. Учёт от роли не зависит: одобренная заявка = перевод денег
+# (+ requester / − approver), см. services/balance._approved_requests_in/out.
+# Ограничение осталось только на ПОЛУЧАТЕЛЯ заявки — см. _validate_approver.
 
 
 def _recalc_total(db: Session, req: MoneyRequest) -> None:
@@ -195,10 +200,6 @@ def create_request(
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
-    if me.role not in CAN_CREATE_ROLES:
-        raise HTTPException(
-            status.HTTP_403_FORBIDDEN, "Заявку могут создавать только accountable и auditor"
-        )
     _validate_approver(db, me, payload.approver_id)
     _validate_categories(db, me, payload.items)
 
@@ -206,7 +207,7 @@ def create_request(
     if payload.department_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
     dep = db.get(Department, payload.department_id)
-    if not dep or dep.org_id != me.org_id:
+    if not dep or dep.org_id != me.org_id or department_forbidden(db, me, payload.department_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
     # Подотчётный может подать заявку по ЛЮБОМУ подразделению своей организации
     # (как и в форме расхода с all=true): не всегда привязан, но заявку создать должен.

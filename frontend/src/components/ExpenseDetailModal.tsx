@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { StatusBadge } from "./StatusBadge";
-import { api, uploadReceipt } from "../api/client";
+import { api, uploadReceipts } from "../api/client";
 import { useToast } from "./Toast";
 import { formatAmountWithEquivalent } from "../lib/format-currency";
 
@@ -26,6 +26,7 @@ interface Props {
 export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClose, onEdit, onChanged }: Props) {
   const toast = useToast();
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState("");
   // Локальная копия списка чеков — чтобы галерея обновлялась без перезагрузки всей страницы.
   const [receipts, setReceipts] = useState<Receipt[]>(() => normalizeReceipts(expense));
 
@@ -36,23 +37,37 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
   }, [onClose]);
 
   async function onFile(ev: React.ChangeEvent<HTMLInputElement>) {
-    const f = ev.target.files?.[0];
-    ev.target.value = ""; // позволяет загрузить тот же файл повторно
-    if (!f) return;
+    // Можно выбрать сразу несколько файлов — грузим по очереди и прикрепляем все.
+    const files = Array.from(ev.target.files || []);
+    ev.target.value = ""; // позволяет загрузить те же файлы повторно
+    if (files.length === 0) return;
     setUploading(true);
+    setProgress(files.length > 1 ? `0 / ${files.length}` : "");
+    const added: Receipt[] = [];
     try {
-      const { url } = await uploadReceipt(f);
-      const r = await api<Receipt>(`/api/expenses/${expense.id}/receipts`, {
-        method: "POST",
-        body: { file_url: url, file_name: f.name },
+      const uploaded = await uploadReceipts(files, (done, total) => {
+        if (total > 1) setProgress(`${done} / ${total}`);
       });
-      setReceipts((prev) => [...prev, r]);
-      toast.show("success", "Чек прикреплён");
+      for (const u of uploaded) {
+        const r = await api<Receipt>(`/api/expenses/${expense.id}/receipts`, {
+          method: "POST",
+          body: { file_url: u.url, file_name: u.name },
+        });
+        added.push(r);
+      }
+      setReceipts((prev) => [...prev, ...added]);
+      toast.show("success", added.length > 1 ? `Прикреплено чеков: ${added.length}` : "Чек прикреплён");
       onChanged?.();
     } catch (e: any) {
+      // Часть файлов могла успеть прикрепиться — показываем их, а не теряем.
+      if (added.length) {
+        setReceipts((prev) => [...prev, ...added]);
+        onChanged?.();
+      }
       toast.show("error", e.message || "Не удалось прикрепить чек");
     } finally {
       setUploading(false);
+      setProgress("");
     }
   }
 
@@ -137,9 +152,10 @@ export function ExpenseDetailModal({ expense, usdKgs, canEdit, canAttach, onClos
                   className="ghost"
                   style={{ display: "inline-block", cursor: uploading ? "default" : "pointer", padding: "8px 12px", borderRadius: 8 }}
                 >
-                  {uploading ? "Загрузка…" : "Прикрепить чек"}
+                  {uploading ? (progress ? `Загрузка ${progress}…` : "Загрузка…") : "Прикрепить чеки"}
                   <input
                     type="file"
+                    multiple
                     accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv"
                     onChange={onFile}
                     disabled={uploading}

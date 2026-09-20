@@ -13,6 +13,12 @@ export interface UserOut {
   is_active: boolean;
   is_confidential?: boolean;
   is_platform_owner?: boolean;
+  /** Свои отчёты (по категориям / по подразделениям) — только по своим расходам. */
+  can_view_own_reports?: boolean;
+  /** Может заводить свои (личные) подразделения — видны только ему и руководству. */
+  can_create_departments?: boolean;
+  /** Может массово импортировать СВОИ прошлые расходы («Импорт истории»). */
+  can_bulk_import?: boolean;
   supervisor_id: number | null;
   created_at: string;
   department_ids?: number[];

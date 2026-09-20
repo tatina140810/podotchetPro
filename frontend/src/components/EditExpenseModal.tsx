@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api, uploadReceipt } from "../api/client";
+import { api, uploadReceipts } from "../api/client";
 import { useToast } from "./Toast";
 import { listDepartments, type Department } from "../api/departments";
 
@@ -34,6 +34,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false);
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState("");
 
   function loadReceipts() {
     api<Receipt[]>(`/api/expenses/${expense.id}/receipts`).then(setReceipts).catch(() => {});
@@ -45,17 +46,27 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   }, []);
 
   async function onReceiptFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    // Множественный выбор: грузим по очереди и прикрепляем все файлы разом.
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // тот же файл можно выбрать повторно
+    if (files.length === 0) return;
     setUploading(true);
+    setProgress(files.length > 1 ? `0 / ${files.length}` : "");
+    let done = 0;
     try {
-      const { url } = await uploadReceipt(f);
-      await api(`/api/expenses/${expense.id}/receipts`, { method: "POST", body: { file_url: url, file_name: f.name } });
-      toast.show("success", "Чек прикреплён");
+      const uploaded = await uploadReceipts(files, (n, total) => {
+        if (total > 1) setProgress(`${n} / ${total}`);
+      });
+      for (const u of uploaded) {
+        await api(`/api/expenses/${expense.id}/receipts`, { method: "POST", body: { file_url: u.url, file_name: u.name } });
+        done += 1;
+      }
+      toast.show("success", done > 1 ? `Прикреплено чеков: ${done}` : "Чек прикреплён");
       loadReceipts();
     } catch (err: any) {
       toast.show("error", err.message);
-    } finally { setUploading(false); }
+      if (done) loadReceipts();  // часть могла прикрепиться — показываем её
+    } finally { setUploading(false); setProgress(""); }
   }
 
   async function removeReceipt(id: number) {
@@ -154,8 +165,8 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
               </div>
             )}
             <label style={{ cursor: "pointer", color: "var(--accent)", fontSize: 13 }}>
-              {uploading ? "загружаю..." : "+ прикрепить чек/документ"}
-              <input type="file" accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" style={{ display: "none" }} onChange={onReceiptFile} disabled={uploading} />
+              {uploading ? (progress ? `загружаю ${progress}...` : "загружаю...") : "+ прикрепить чеки/документы"}
+              <input type="file" multiple accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" style={{ display: "none" }} onChange={onReceiptFile} disabled={uploading} />
             </label>
           </div>
           <div className="row" style={{ justifyContent: "flex-end" }}>

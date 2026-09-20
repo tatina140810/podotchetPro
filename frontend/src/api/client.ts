@@ -69,6 +69,23 @@ export async function uploadReceipt(file: File): Promise<{ url: string; size: nu
   return res.json();
 }
 
+/** Последовательная загрузка нескольких файлов (множественный выбор чеков).
+ * Последовательно, а не Promise.all: сервер пишет файлы на диск, параллельная
+ * пачка на слабом канале чаще отваливается по таймауту. Возвращает url в порядке
+ * файлов; на первой ошибке пробрасывает её вместе с уже загруженными. */
+export async function uploadReceipts(
+  files: File[],
+  onProgress?: (done: number, total: number) => void,
+): Promise<{ url: string; name: string }[]> {
+  const out: { url: string; name: string }[] = [];
+  for (const f of files) {
+    const { url } = await uploadReceipt(f);
+    out.push({ url, name: f.name });
+    onProgress?.(out.length, files.length);
+  }
+  return out;
+}
+
 export async function downloadFile(path: string, fallbackName: string) {
   const headers: Record<string, string> = {};
   const token = getToken();

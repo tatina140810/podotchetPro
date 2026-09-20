@@ -94,6 +94,19 @@ export function BurgerMenu() {
         { to: "/", label: "Главная" },
         { to: "/my-expenses", label: "Мои расходы" },
         { to: "/my-history", label: "Моя история" },
+        // Свои отчёты и свои подразделения — по индивидуальным флагам сотрудника.
+        ...(user.can_view_own_reports
+          ? [
+              { to: "/reports/categories", label: "Мои расходы по категориям" },
+              { to: "/reports/departments", label: "Мои расходы по подразделениям" },
+            ]
+          : []),
+        ...(user.can_create_departments
+          ? [{ to: "/my-departments", label: "Мои подразделения" }]
+          : []),
+        ...(user.can_bulk_import
+          ? [{ to: "/admin/bulk-import", label: "Импорт истории" }]
+          : []),
         // «Авансы поставщикам» — только у владельца проектного пространства (Мээрим),
         // это фича его пространства. Обычному подотчётному (Адик) не показываем.
         ...(isoOwner ? [{ to: "/supplier-advances", label: "Авансы поставщикам" }] : []),

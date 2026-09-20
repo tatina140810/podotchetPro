@@ -84,6 +84,11 @@ class UserUpdate(BaseModel):
     department_ids: Optional[List[int]] = None
     # Конфиденциальность (Фича 2) — менять может только superadmin (проверка в роутере).
     is_confidential: Optional[bool] = None
+    # Личные отчёты / личные подразделения — менять может superadmin и gen_director
+    # (проверка в роутере). None = не менять.
+    can_view_own_reports: Optional[bool] = None
+    can_create_departments: Optional[bool] = None
+    can_bulk_import: Optional[bool] = None
 
 
 class UserOut(BaseModel):
@@ -98,6 +103,11 @@ class UserOut(BaseModel):
     is_active: bool
     is_confidential: bool = False
     is_platform_owner: bool = False
+    # Личные отчёты (по своим расходам) и личные подразделения — ставит
+    # superadmin/gen_director в карточке сотрудника.
+    can_view_own_reports: bool = False
+    can_create_departments: bool = False
+    can_bulk_import: bool = False
     supervisor_id: Optional[int] = None
     created_at: datetime
     # Подразделения сотрудника (id) — заполняется в роутере из M2M.
@@ -259,6 +269,8 @@ class DepartmentOut(BaseModel):
     org_id: int
     name: str
     currency: Optional[str] = None
+    # Владелец ЛИЧНОГО подразделения (NULL = обычное общее подразделение org).
+    owner_id: Optional[int] = None
     created_at: datetime
     # Счётчики для страницы управления (заполняются в роутере).
     employee_count: int = 0
@@ -818,6 +830,12 @@ class PushUnsubscribePayload(BaseModel):
 
 # ===================== ADMIN BULK IMPORT =====================
 
+class BulkImportReceipt(BaseModel):
+    """Один прикреплённый к строке импорта документ (url из upload-receipt + имя файла)."""
+    url: str
+    name: Optional[str] = None
+
+
 class BulkImportItem(BaseModel):
     """Одна операция для массового импорта. Поля разные в зависимости от type."""
     type: str = Field(..., pattern="^(expense|income|topup)$")
@@ -837,7 +855,9 @@ class BulkImportItem(BaseModel):
     # «Расход из личных средств в счёт подразделения» (только для expense).
     is_personal_contribution: bool = False
     # Чек/документ (только для expense): url из POST /api/expenses/upload-receipt.
+    # Legacy — один чек; новый фронт шлёт список `receipts` (несколько на строку).
     receipt_url: Optional[str] = None
+    receipts: Optional[List[BulkImportReceipt]] = None
 
 
 class BulkImportPayload(BaseModel):

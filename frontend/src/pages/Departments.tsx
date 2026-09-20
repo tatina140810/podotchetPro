@@ -16,8 +16,14 @@ const CURRENCY_OPTIONS: { value: DepartmentCurrency | ""; label: string }[] = [
   { value: "RUB", label: "RUB — ₽" },
 ];
 import { useToast } from "../components/Toast";
+import { isDirectorOrAuditor, useAuth } from "../context/AuthContext";
 
 export default function Departments() {
+  const { user } = useAuth();
+  // Сотрудник (не директор/аудитор) управляет только СВОИМИ подразделениями:
+  // созданные им — личные (owner_id = его id), чужие видит только для выбора.
+  const personal = !isDirectorOrAuditor(user?.role);
+  const canEdit = (d: Department) => !personal || d.owner_id === user?.id;
   const [list, setList] = useState<Department[] | null>(null);
   const [adding, setAdding] = useState(false);
   const [name, setName] = useState("");
@@ -70,7 +76,7 @@ export default function Departments() {
   return (
     <div className="container">
       <div className="row between" style={{ marginBottom: 16 }}>
-        <h1 className="h1" style={{ margin: 0 }}>Подразделения</h1>
+        <h1 className="h1" style={{ margin: 0 }}>{personal ? "Мои подразделения" : "Подразделения"}</h1>
         <button onClick={() => { setAdding(true); setName(""); }}>+ Добавить подразделение</button>
       </div>
 
@@ -85,21 +91,27 @@ export default function Departments() {
                 </span>
               </div>
               <div className="row" style={{ gap: 8, alignItems: "center" }}>
-                <select
-                  value={d.currency || ""}
-                  onChange={(e) => changeCurrency(d, e.target.value as DepartmentCurrency | "")}
-                  title="Валюта подразделения: профиль сотрудников и новые расходы"
-                  style={{ fontSize: 13, padding: "6px 8px" }}
-                >
-                  {CURRENCY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-                </select>
-                <button
-                  className="danger"
-                  style={{ padding: "6px 12px", fontSize: 13 }}
-                  onClick={() => remove(d)}
-                >
-                  Удалить
-                </button>
+                {canEdit(d) ? (
+                  <>
+                    <select
+                      value={d.currency || ""}
+                      onChange={(e) => changeCurrency(d, e.target.value as DepartmentCurrency | "")}
+                      title="Валюта подразделения: профиль сотрудников и новые расходы"
+                      style={{ fontSize: 13, padding: "6px 8px" }}
+                    >
+                      {CURRENCY_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+                    </select>
+                    <button
+                      className="danger"
+                      style={{ padding: "6px 12px", fontSize: 13 }}
+                      onClick={() => remove(d)}
+                    >
+                      Удалить
+                    </button>
+                  </>
+                ) : (
+                  <span className="muted" style={{ fontSize: 12 }}>общее подразделение</span>
+                )}
               </div>
             </div>
           </div>
@@ -115,7 +127,12 @@ export default function Departments() {
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
         }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
-            <h2 className="h2">Новое подразделение</h2>
+            <h2 className="h2">{personal ? "Новое своё подразделение" : "Новое подразделение"}</h2>
+            {personal && (
+              <div className="muted" style={{ fontSize: 12, marginBottom: 8 }}>
+                Его увидите только вы и руководство. Другим сотрудникам оно не показывается.
+              </div>
+            )}
             <form onSubmit={(e) => { e.preventDefault(); save(); }} className="grid">
               <div>
                 <label>Название</label>

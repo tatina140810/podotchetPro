@@ -3,7 +3,9 @@
 Права:
   - GET  — любой авторизованный. accountable видит только свои подразделения;
            admin/gen_director/auditor — все подразделения org.
-  - POST/DELETE — только admin/auditor (require_auditor).
+  - POST/DELETE — admin/auditor (require_auditor) для ОБЩИХ подразделений;
+           сотрудник с флагом can_create_departments — только свои ЛИЧНЫЕ
+           (owner_id = его id), их видит он сам и superadmin/gen_director.
   - Удаление запрещено, если к подразделению привязаны расходы, пополнения,
     заявки или категории (членство сотрудников удаляется каскадно).
 """
@@ -13,7 +15,12 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
-from auth import can_manage_workspaces, get_current_user, is_director_or_auditor, require_auditor
+from auth import (
+    can_manage_workspaces,
+    can_see_personal_departments,
+    get_current_user,
+    is_director_or_auditor,
+)
 from database import get_db
 from models import (
     BalanceTopUp,
@@ -25,7 +32,12 @@ from models import (
     User,
 )
 from schemas import DepartmentCreate, DepartmentOut, DepartmentUpdate
-from services.permissions import auditor_department_ids, member_active_workspace_id
+from services.permissions import (
+    auditor_department_ids,
+    can_edit_department,
+    hidden_department_ids,
+    member_active_workspace_id,
+)
 
 
 router = APIRouter(prefix="/api/departments", tags=["departments"])
@@ -79,6 +91,16 @@ def my_department_ids(db: Session, user: User) -> set[int]:
     return {r[0] for r in rows}
 
 
+def _own_department_ids(db: Session, user: User) -> set[int]:
+    """id ЛИЧНЫХ подразделений сотрудника (departments.owner_id = его id)."""
+    rows = (
+        db.query(Department.id)
+        .filter(Department.org_id == user.org_id, Department.owner_id == user.id)
+        .all()
+    )
+    return {did for (did,) in rows}
+
+
 def _counts(db: Session, org_id: int) -> tuple[dict[int, int], dict[int, int]]:
     """Возвращает (employee_count_by_dept, category_count_by_dept) для org."""
     emp_rows = (
@@ -118,6 +140,10 @@ def list_departments(
     операции/заявки): подотчётному нужно выбрать любое подразделение, даже если он к
     нему не привязан. По умолчанию accountable видит только свои подразделения."""
     q = db.query(Department).filter(Department.org_id == me.org_id)
+    # Чужие личные подразделения не видны никому, кроме superadmin/gen_director.
+    hidden = hidden_department_ids(db, me)
+    if hidden:
+        q = q.filter(Department.id.notin_(hidden))
     member_ws = member_active_workspace_id(db, me.id, me.org_id)
     dept_scope = auditor_department_ids(db, me)  # ограниченный аудитор
     if member_ws is not None:
@@ -137,8 +163,8 @@ def list_departments(
         ids = _scoped_department_ids(db, me.org_id, workspace_id=None, common=True)
         q = q.filter(Department.id.in_(ids or {-1}))
     elif not all:
-        # accountable видит только свои подразделения
-        ids = my_department_ids(db, me)
+        # accountable видит подразделения своего членства + свои личные
+        ids = my_department_ids(db, me) | _own_department_ids(db, me)
         if not ids:
             return []
         q = q.filter(Department.id.in_(ids))
@@ -147,12 +173,30 @@ def list_departments(
     return [_to_out(d, emp_counts, cat_counts) for d in depts]
 
 
+def _require_create_access(me: User) -> bool:
+    """Возвращает True, если подразделение создаётся ЛИЧНЫМ (owner_id = me.id).
+
+    - admin/auditor/superadmin → общее подразделение org (прежнее поведение);
+    - сотрудник с can_create_departments → только личное;
+    - остальные → 403.
+    """
+    if me.role in ("admin", "auditor", "superadmin"):
+        return False
+    if me.can_create_departments:
+        return True
+    raise HTTPException(
+        status.HTTP_403_FORBIDDEN,
+        "Создавать подразделения может admin, аудитор или сотрудник с правом на свои подразделения",
+    )
+
+
 @router.post("", response_model=DepartmentOut, status_code=status.HTTP_201_CREATED)
 def create_department(
     payload: DepartmentCreate,
     db: Session = Depends(get_db),
-    me: User = Depends(require_auditor),
+    me: User = Depends(get_current_user),
 ):
+    personal = _require_create_access(me)
     name = payload.name.strip()
     if not name:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Название не может быть пустым")
@@ -163,11 +207,33 @@ def create_department(
     )
     if exists:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение с таким названием уже есть")
-    d = Department(org_id=me.org_id, name=name, currency=payload.currency)
+    d = Department(
+        org_id=me.org_id, name=name, currency=payload.currency,
+        owner_id=me.id if personal else None,
+    )
     db.add(d)
     db.commit()
     db.refresh(d)
     return _to_out(d, {}, {})
+
+
+def _get_editable_department(db: Session, me: User, dept_id: int) -> Department:
+    """Подразделение, которое me вправе править/удалять.
+
+    - admin/auditor/superadmin — общие подразделения своей org (как раньше);
+    - владелец личного подразделения — только своё;
+    - чужое личное подразделение — 404 (его для me не существует).
+    """
+    d = db.get(Department, dept_id)
+    if not d or d.org_id != me.org_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
+    if d.owner_id is not None and d.owner_id != me.id and not can_see_personal_departments(me):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
+    if can_edit_department(db, me, d):
+        return d
+    if me.role in ("admin", "auditor", "superadmin"):
+        return d
+    raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет прав на это подразделение")
 
 
 @router.patch("/{dept_id}", response_model=DepartmentOut)
@@ -175,13 +241,11 @@ def update_department(
     dept_id: int,
     payload: DepartmentUpdate,
     db: Session = Depends(get_db),
-    me: User = Depends(require_auditor),
+    me: User = Depends(get_current_user),
 ):
     """Смена валюты подразделения (NULL = сомы). Историю расходов НЕ трогает —
     влияет на валюту показа профиля и валюту по умолчанию в формах."""
-    d = db.get(Department, dept_id)
-    if not d or d.org_id != me.org_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
+    d = _get_editable_department(db, me, dept_id)
     d.currency = payload.currency
     db.commit()
     emp_counts, cat_counts = _counts(db, me.org_id)
@@ -192,11 +256,9 @@ def update_department(
 def delete_department(
     dept_id: int,
     db: Session = Depends(get_db),
-    me: User = Depends(require_auditor),
+    me: User = Depends(get_current_user),
 ):
-    d = db.get(Department, dept_id)
-    if not d or d.org_id != me.org_id:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Подразделение не найдено")
+    d = _get_editable_department(db, me, dept_id)
 
     # Проверяем привязки, блокирующие удаление. include_deleted=True: soft-deleted
     # расходы/пополнения ТОЖЕ блокируют — иначе удаление подразделения снесёт их по

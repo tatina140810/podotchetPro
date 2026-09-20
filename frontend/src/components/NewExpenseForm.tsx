@@ -8,7 +8,7 @@
  *   compact — слегка плотнее (для встраивания в страницу).
  */
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, uploadReceipt } from "../api/client";
+import { api, uploadReceipts } from "../api/client";
 import { useToast } from "../components/Toast";
 import {
   useAuth,
@@ -62,6 +62,10 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
   // тогда создаются два одинаковых расхода (double-submit). Ref срабатывает сразу.
   const submittingRef = useRef(false);
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState("");
+  // Чеки сверх первого: расход создаётся с одним receipt_url (legacy-поле), остальные
+  // прикрепляются к нему сразу после создания через POST /expenses/{id}/receipts.
+  const [extraReceipts, setExtraReceipts] = useState<{ url: string; name: string }[]>([]);
 
   useEffect(() => {
     if (!me) return;
@@ -111,6 +115,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     });
     setPaySource("balance");
     setAdvanceId("");
+    setExtraReceipts([]);
     // onBehalfOf не сбрасываем — admin часто вносит подряд несколько записей за одного
   }
 
@@ -126,16 +131,29 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     : null;
 
   async function onFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const f = e.target.files?.[0];
-    if (!f) return;
+    // Можно выбрать несколько файлов сразу — грузим по очереди.
+    const files = Array.from(e.target.files || []);
+    e.target.value = ""; // те же файлы можно выбрать повторно
+    if (files.length === 0) return;
     setUploading(true);
+    setUploadProgress(files.length > 1 ? `0 / ${files.length}` : "");
     try {
-      const { url } = await uploadReceipt(f);
-      setForm((s) => ({ ...s, receipt_url: url }));
-      toast.show("success", "Чек загружен");
+      const uploaded = await uploadReceipts(files, (done, total) => {
+        if (total > 1) setUploadProgress(`${done} / ${total}`);
+      });
+      setForm((s) => (s.receipt_url ? s : { ...s, receipt_url: uploaded[0].url }));
+      const rest = form.receipt_url ? uploaded : uploaded.slice(1);
+      if (rest.length) setExtraReceipts((prev) => [...prev, ...rest]);
+      toast.show("success", uploaded.length > 1 ? `Загружено файлов: ${uploaded.length}` : "Чек загружен");
     } catch (err: any) {
       toast.show("error", err.message);
-    } finally { setUploading(false); }
+    } finally { setUploading(false); setUploadProgress(""); }
+  }
+
+  const receiptCount = (form.receipt_url ? 1 : 0) + extraReceipts.length;
+
+  function removeExtraReceipt(url: string) {
+    setExtraReceipts((prev) => prev.filter((r) => r.url !== url));
   }
 
   async function submitExpense() {
@@ -158,7 +176,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         return false;
       }
     }
-    await api("/api/expenses", {
+    const created = await api<{ id: number }>("/api/expenses", {
       method: "POST",
       body: {
         category_id: form.category_id ? Number(form.category_id) : null,
@@ -174,6 +192,20 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         supplier_advance_id: paySource === "supplier_advance" && advanceId ? Number(advanceId) : null,
       },
     });
+    // Остальные выбранные файлы прикрепляем к уже созданному расходу.
+    if (extraReceipts.length && created?.id) {
+      for (const r of extraReceipts) {
+        try {
+          await api(`/api/expenses/${created.id}/receipts`, {
+            method: "POST", body: { file_url: r.url, file_name: r.name },
+          });
+        } catch {
+          // Расход уже создан — не роняем весь сабмит из-за одного чека,
+          // недостающие можно доложить из карточки расхода.
+          toast.show("error", `Не удалось прикрепить файл: ${r.name}`);
+        }
+      }
+    }
     const msgPart = onBehalfName ? ` (от лица ${onBehalfName})` : "";
     toast.show("success", "Расход добавлен" + msgPart);
     return true;
@@ -472,31 +504,39 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         )}
         {kind === "expense" && (
           <div>
-            <label>Фото чека{requiresReceipt && " (обязательно)"}</label>
-            <input type="file" accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" capture="environment" onChange={onFile} />
-            {uploading && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>загружаю...</div>}
-            {form.receipt_url && <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>✓ {form.receipt_url}</div>}
-          </div>
-        )}
-        {kind === "expense" && (
-          <div>
-            <label style={{ display: "flex", alignItems: "center", gap: 8, cursor: "pointer", fontWeight: 400 }}>
-              <input
-                type="checkbox"
-                checked={form.is_personal_contribution}
-                onChange={(e) => setForm({ ...form, is_personal_contribution: e.target.checked })}
-                style={{ width: "auto", margin: 0 }}
-              />
-              Расход из личных средств в счёт подразделения
+            <label>
+              Чеки и документы{requiresReceipt && " (обязательно)"}
+              <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}> — можно выбрать несколько сразу</span>
             </label>
-            <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
-              Отметьте, если сотрудник оплатил из личных средств без подотчёта. Сумма
-              учтётся как вклад в бюджет подразделения (и приход, и расход) — личный
-              баланс и приходы сотрудника не меняются.
-            </div>
+            {/* multiple без capture: capture="environment" на телефоне открывает камеру
+                и не даёт выбрать несколько файлов из галереи. */}
+            <input type="file" multiple accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" onChange={onFile} />
+            {uploading && (
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                {uploadProgress ? `загружаю ${uploadProgress}...` : "загружаю..."}
+              </div>
+            )}
+            {receiptCount > 0 && (
+              <div className="grid" style={{ gap: 2, marginTop: 4 }}>
+                <div className="muted" style={{ fontSize: 12 }}>Прикреплено: {receiptCount}</div>
+                {form.receipt_url && (
+                  <div className="row between" style={{ fontSize: 12, gap: 8 }}>
+                    <span className="muted">{form.receipt_url}</span>
+                    <button type="button" className="ghost" style={{ padding: "1px 6px", fontSize: 11 }}
+                      onClick={() => setForm((s) => ({ ...s, receipt_url: "" }))}>убрать</button>
+                  </div>
+                )}
+                {extraReceipts.map((r) => (
+                  <div key={r.url} className="row between" style={{ fontSize: 12, gap: 8 }}>
+                    <span className="muted">{r.name}</span>
+                    <button type="button" className="ghost" style={{ padding: "1px 6px", fontSize: 11 }}
+                      onClick={() => removeExtraReceipt(r.url)}>убрать</button>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
-
         <div className="row" style={{ justifyContent: "flex-end" }}>
           {onCancel && (
             <button type="button" className="ghost" onClick={onCancel}>Отмена</button>

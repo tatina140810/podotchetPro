@@ -28,6 +28,9 @@ export function EditUserModal({
     role: user.role as Role,
     is_active: !!user.is_active,
     is_confidential: !!user.is_confidential,
+    can_view_own_reports: !!user.can_view_own_reports,
+    can_create_departments: !!user.can_create_departments,
+    can_bulk_import: !!user.can_bulk_import,
     password: "",
   });
   const [departments, setDepartments] = useState<Department[]>([]);
@@ -55,8 +58,14 @@ export function EditUserModal({
         is_active: form.is_active,
         department_ids: deptIds,
       };
-      // is_confidential отправляем только superadmin (бэкенд иначе вернёт 403).
-      if (canEditConfidential) body.is_confidential = form.is_confidential;
+      // is_confidential и права на свои отчёты/подразделения отправляет только
+      // superadmin (бэкенд иначе вернёт 403).
+      if (canEditConfidential) {
+        body.is_confidential = form.is_confidential;
+        body.can_view_own_reports = form.can_view_own_reports;
+        body.can_create_departments = form.can_create_departments;
+        body.can_bulk_import = form.can_bulk_import;
+      }
       if (form.password) body.password = form.password;
       await api(`/api/users/${user.id}`, { method: "PATCH", body });
       onSaved();
@@ -111,6 +120,40 @@ export function EditUserModal({
                   от всех, кроме Генерального директора и Суперадмина.
                 </div>
               )}
+            </div>
+          )}
+          {canEditConfidential && (
+            <div>
+              <label className="row" style={{ gap: 8, margin: 0, cursor: "pointer" }}>
+                <input type="checkbox" style={{ width: "auto" }}
+                       checked={form.can_view_own_reports}
+                       onChange={(e) => setForm({ ...form, can_view_own_reports: e.target.checked })} />
+                <span>Свои отчёты (по категориям и подразделениям)</span>
+              </label>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Сотрудник видит отчёты, посчитанные только по его расходам. Чужие расходы
+                и приходы организации ему не показываются.
+              </div>
+              <label className="row" style={{ gap: 8, margin: "10px 0 0", cursor: "pointer" }}>
+                <input type="checkbox" style={{ width: "auto" }}
+                       checked={form.can_create_departments}
+                       onChange={(e) => setForm({ ...form, can_create_departments: e.target.checked })} />
+                <span>Свои подразделения</span>
+              </label>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Может заводить собственные подразделения. Другим сотрудникам они не видны,
+                у них список остаётся прежним.
+              </div>
+              <label className="row" style={{ gap: 8, margin: "10px 0 0", cursor: "pointer" }}>
+                <input type="checkbox" style={{ width: "auto" }}
+                       checked={form.can_bulk_import}
+                       onChange={(e) => setForm({ ...form, can_bulk_import: e.target.checked })} />
+                <span>Импорт истории</span>
+              </label>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Массовый ввод своих прошлых расходов таблицей. Только на себя и только расходы —
+                приходы и выдачи через импорт ему недоступны.
+              </div>
             </div>
           )}
           <div>

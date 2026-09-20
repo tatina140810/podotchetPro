@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useDisplayCurrency } from "../context/CurrencyContext";
+import { isDirectorOrAuditor, useAuth } from "../context/AuthContext";
 
 const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 
@@ -25,6 +26,9 @@ interface Report {
 
 export default function ReportsDepartments() {
   const toast = useToast();
+  const { user } = useAuth();
+  // Личный режим: суммы уже урезаны бэкендом до расходов самого сотрудника.
+  const personal = !isDirectorOrAuditor(user?.role);
   const today = new Date();
   const [year, setYear] = useState(today.getFullYear());
   const [month, setMonth] = useState(today.getMonth() + 1);
@@ -60,7 +64,9 @@ export default function ReportsDepartments() {
   return (
     <div className="container">
       <div className="row between" style={{ marginBottom: 12, flexWrap: "wrap", gap: 12 }}>
-        <h1 className="h1" style={{ margin: 0 }}>Отчёт по подразделениям</h1>
+        <h1 className="h1" style={{ margin: 0 }}>
+          {personal ? "Мои расходы по подразделениям" : "Отчёт по подразделениям"}
+        </h1>
         <button type="button" onClick={onExport} disabled={exporting || !data} style={{ background: "#107C41", color: "#fff" }}>
           {exporting ? "..." : "Excel"}
         </button>
@@ -89,7 +95,7 @@ export default function ReportsDepartments() {
           {/* В отчёте показываем только расход по подразделениям (приход/итог
               скрыты по решению Тати 2026-09-01; бэкенд и Excel их по-прежнему считают). */}
           <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10, marginBottom: 16 }}>
-            <div className="card"><div className="muted" style={{ fontSize: 12 }}>Всего расход</div>
+            <div className="card"><div className="muted" style={{ fontSize: 12 }}>{personal ? "Мой расход" : "Всего расход"}</div>
               <div style={{ fontSize: 20, fontWeight: 700, color: "var(--danger)", marginTop: 4 }}>{fmt(data.totals.spent)} {sym}</div></div>
           </div>
 

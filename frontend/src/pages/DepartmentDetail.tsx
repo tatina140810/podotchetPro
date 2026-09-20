@@ -3,7 +3,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import { EditExpenseModal } from "../components/EditExpenseModal";
-import { isDirectorLevel, useAuth } from "../context/AuthContext";
+import { isDirectorLevel, isDirectorOrAuditor, useAuth } from "../context/AuthContext";
 
 const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 
@@ -14,6 +14,12 @@ interface Op {
   description: string | null; category_name: string | null; source?: string | null;
   is_personal_contribution?: boolean; expense_type?: string; category_id?: number | null;
   status?: string;
+}
+/** Строка /api/expenses — источник операций в личном режиме сотрудника. */
+interface PersonalExpense {
+  id: number; amount: number; currency: string; description: string | null;
+  spent_at: string; status: string; expense_type: string;
+  category_id: number | null; is_personal_contribution: boolean;
 }
 interface Dept {
   id: number; name: string;
@@ -30,6 +36,10 @@ export default function DepartmentDetail() {
   const toast = useToast();
   const { user } = useAuth();
   const canReview = isDirectorLevel(user?.role);
+  // Личный режим (сотрудник со своими отчётами): админский список операций
+  // подразделения ему недоступен — берём его собственные расходы из /api/expenses,
+  // где скоуп «свои + подчинённые» уже действует.
+  const personal = !isDirectorOrAuditor(user?.role);
   const [sp, setSp] = useSearchParams();
   const today = new Date();
   const year = Number(sp.get("year")) || today.getFullYear();
@@ -41,6 +51,7 @@ export default function DepartmentDetail() {
   const [busyId, setBusyId] = useState<number | null>(null);
   const [editing, setEditing] = useState<Op | null>(null);
   const [catId, setCatId] = useState<number | "">("");
+  const [catNames, setCatNames] = useState<Record<number, string>>({});
 
   function loadDept() {
     api<{ departments: Dept[] }>(`/api/reports/by-department?year=${year}&month=${month}&currency=KGS&_t=${Date.now()}`)
@@ -50,10 +61,44 @@ export default function DepartmentDetail() {
   function loadOps() {
     const from = `${year}-${String(month).padStart(2, "0")}-01`;
     const to = `${year}-${String(month).padStart(2, "0")}-${lastDay(year, month)}`;
+    if (personal) {
+      // date_to у /api/expenses — строго меньше, поэтому берём начало следующего дня.
+      const toExclusive = `${year}-${String(month).padStart(2, "0")}-${lastDay(year, month)}T23:59:59`;
+      api<PersonalExpense[]>(
+        `/api/expenses?department_id=${deptId}&date_from=${from}T00:00:00&date_to=${toExclusive}&limit=200&_t=${Date.now()}`,
+      )
+        .then((rows) =>
+          setOps(
+            rows.map((e) => ({
+              kind: "expense" as const,
+              id: e.id,
+              date: e.spent_at,
+              who: user?.name ?? null,
+              amount: Number(e.amount),
+              currency: e.currency,
+              description: e.description,
+              category_name: catNames[e.category_id ?? -1] ?? null,
+              category_id: e.category_id ?? null,
+              is_personal_contribution: e.is_personal_contribution,
+              expense_type: e.expense_type,
+              status: e.status,
+            })),
+          ),
+        )
+        .catch((e) => toast.show("error", e.message));
+      return;
+    }
     api<{ items: Op[] }>(`/api/admin/recent-operations?department_id=${deptId}&date_from=${from}&date_to=${to}&limit=200&_t=${Date.now()}`)
       .then((d) => setOps(d.items)).catch((e) => toast.show("error", e.message));
   }
-  useEffect(() => { loadDept(); loadOps(); }, [deptId, year, month]);
+  // Названия категорий для личного режима (/api/expenses отдаёт только category_id).
+  useEffect(() => {
+    if (!personal) return;
+    api<{ id: number; name: string }[]>("/api/categories")
+      .then((cats) => setCatNames(Object.fromEntries(cats.map((c) => [c.id, c.name]))))
+      .catch(() => {});
+  }, [personal]);
+  useEffect(() => { loadDept(); loadOps(); }, [deptId, year, month, catNames]);
 
   function setPeriod(patch: { year?: number; month?: number }) {
     const next = new URLSearchParams(sp);
@@ -127,10 +172,12 @@ export default function DepartmentDetail() {
       </div>
 
       {!dept ? <div className="muted">Загрузка...</div> : (
-        <div className="grid" style={{ gridTemplateColumns: "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
-          <Card k="incomes" title="Приходы" value={dept.summary.received} color="var(--success)" />
-          <Card k="expenses" title="Расходы" value={dept.summary.spent} color="var(--danger)" />
-          <Card k="employees" title="Сотрудники" value={dept.summary.result} color={dept.summary.result >= 0 ? "var(--success)" : "var(--danger)"} />
+        <div className="grid" style={{ gridTemplateColumns: personal ? "1fr" : "repeat(3, 1fr)", gap: 10, marginBottom: 12 }}>
+          {!personal && <Card k="incomes" title="Приходы" value={dept.summary.received} color="var(--success)" />}
+          <Card k="expenses" title={personal ? "Мои расходы" : "Расходы"} value={dept.summary.spent} color="var(--danger)" />
+          {!personal && (
+            <Card k="employees" title="Сотрудники" value={dept.summary.result} color={dept.summary.result >= 0 ? "var(--success)" : "var(--danger)"} />
+          )}
         </div>
       )}
 

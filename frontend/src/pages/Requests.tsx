@@ -32,7 +32,9 @@ export default function Requests() {
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
 
-  const canCreate = user?.role === "accountable" || user?.role === "auditor";
+  // Заявку может подать любой сотрудник, включая admin/gen_director (2026-09-17):
+  // админы тоже запрашивают средства. Бэкенд гейта по роли больше не имеет.
+  const canCreate = !!user;
 
   function reload() {
     setErr(null);

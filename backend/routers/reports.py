@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from auth import (
@@ -13,6 +13,7 @@ from auth import (
     require_admin,
     require_director_level,
     require_director_or_auditor,
+    require_reports_access,
 )
 from database import get_db
 from models import (
@@ -51,10 +52,12 @@ from services.excel_export import build_workbook
 from services.permissions import (
     auditor_department_ids,
     auditor_visible_user_ids,
+    department_forbidden,
     enforce_report_department,
     hidden_user_ids,
     masked_workspace_category_ids,
     owner_isolation_ws_id,
+    personal_report_user_id,
     workspace_details_hidden,
     workspace_member_ids,
 )
@@ -77,6 +80,23 @@ def _ws_view(db, me):
     iso_ws, iso_members = _iso(db, me)
     exclude_ws = iso_ws is None and workspace_details_hidden(db, me)
     return iso_ws, iso_members, exclude_ws
+
+def _own_expense_clause(uid: int):
+    """Расходы сотрудника: он плательщик ИЛИ он же внёс запись (admin «от лица»
+    другого пишет recorded_by_id). Используется в личных отчётах сотрудника."""
+    return or_(Expense.employee_id == uid, Expense.recorded_by_id == uid)
+
+
+def _personal_department_ids(db: Session, org_id: int, uid: int) -> set[int]:
+    """Личные подразделения сотрудника — показываем их в его отчёте даже без
+    движений, чтобы он видел свою структуру целиком."""
+    rows = (
+        db.query(Department.id)
+        .filter(Department.org_id == org_id, Department.owner_id == uid)
+        .all()
+    )
+    return {did for (did,) in rows}
+
 
 # Метка, которой подменяются приватные категории/описания пространств в отчётах
 # для ролей без права на детализацию (деньги-итоги при этом не меняются).
@@ -702,11 +722,14 @@ def _build_category_report(
     mask_ws: bool = False,
     iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
     exclude_ws: bool = False,
+    only_employee_id: Optional[int] = None,
 ) -> dict:
     """Отчёт «По категориям» — две секции (operational / other), без имён сотрудников.
     Расход = ТОЛЬКО Expense (TopUp не считается расходом компании, это движение).
     При смене курса USD/KGS — пересчитывается через load_org_rates + to_kgs_expr.
-    department_id — если задан, считаем только расходы этого подразделения."""
+    department_id — если задан, считаем только расходы этого подразделения.
+    only_employee_id — личный отчёт сотрудника: в расход попадают ТОЛЬКО его
+    расходы, приходы организации не показываются вовсе."""
     rates = load_org_rates(db, org_id)
     usd_rate = rates.get("USD")
     start, end = _month_range(year, month)
@@ -733,6 +756,8 @@ def _build_category_report(
     )
     if department_id is not None:
         exp_q = exp_q.filter(Expense.department_id == department_id)
+    if only_employee_id is not None:  # личный отчёт: только свои расходы
+        exp_q = exp_q.filter(_own_expense_clause(only_employee_id))
     if hidden_ids:  # Фича 2: собственные расходы конфиденциальных не считаем
         exp_q = exp_q.filter(Expense.employee_id.notin_(hidden_ids))
     if iso_ws is not None:  # изоляция владельца: только расходы его пространства
@@ -813,7 +838,9 @@ def _build_category_report(
     # --- Приходы за период ---
     # Приходы (Income) не привязаны к подразделению — при фильтре по подразделению
     # их не показываем (иначе исказят результат конкретного подразделения).
-    if department_id is not None:
+    if department_id is not None or only_employee_id is not None:
+        # В личном отчёте приходы организации не показываем — сотруднику видны
+        # только его расходы (его собственные поступления есть в «Моей истории»).
         total_income_kgs = 0.0
     else:
         inc_q = (
@@ -1172,8 +1199,10 @@ def category_report(
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
     department_id: Optional[int] = None,
     db: Session = Depends(get_db),
-    me: User = Depends(require_director_or_auditor),
+    me: User = Depends(require_reports_access),
 ):
+    if department_id is not None and department_forbidden(db, me, department_id):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к этому подразделению")
     department_id = enforce_report_department(auditor_department_ids(db, me), department_id)
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     return _build_category_report(
@@ -1181,6 +1210,7 @@ def category_report(
         department_id=department_id, hidden_ids=hidden_user_ids(db, me),
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+        only_employee_id=personal_report_user_id(db, me),
     )
 
 
@@ -1217,7 +1247,10 @@ def _build_department_report(
     hidden_ids: Optional[set] = None, mask_ws: bool = False,
     iso_ws: Optional[int] = None, iso_members: Optional[set] = None,
     exclude_ws: bool = False,
+    only_employee_id: Optional[int] = None,
 ) -> dict:
+    """only_employee_id — личный отчёт сотрудника: расход считается только по его
+    расходам, приход — только по выдачам, полученным им самим."""
     rates = load_org_rates(db, org_id)
     usd = rates.get("USD")
     start, end = _month_range(year, month)
@@ -1240,6 +1273,8 @@ def _build_department_report(
             (Category.id.is_(None)) | (Category.is_system.is_(False)),
         )
     )
+    if only_employee_id is not None:
+        exp_base = exp_base.filter(_own_expense_clause(only_employee_id))
     if hidden:
         exp_base = exp_base.filter(Expense.employee_id.notin_(hidden))
     if iso_ws is not None:
@@ -1250,6 +1285,8 @@ def _build_department_report(
     top_base = db.query(BalanceTopUp).filter(
         BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end
     )
+    if only_employee_id is not None:
+        top_base = top_base.filter(BalanceTopUp.user_id == only_employee_id)
     if hidden:
         top_base = top_base.filter(
             BalanceTopUp.user_id.notin_(hidden), BalanceTopUp.admin_id.notin_(hidden)
@@ -1355,7 +1392,13 @@ def _build_department_report(
                 cat_names[cid] = _WS_MASK_LABEL
 
     dept_q = db.query(Department).filter(Department.org_id == org_id)
-    if iso_ws is not None or exclude_ws:
+    if only_employee_id is not None:
+        # Личный отчёт: подразделения с его движениями + его личные подразделения
+        # (даже пустые — чтобы он видел свою структуру).
+        own_ids = {d for d in (set(spent_by) | set(recv_by)) if d is not None}
+        own_ids |= _personal_department_ids(db, org_id, only_employee_id)
+        dept_q = dept_q.filter(Department.id.in_(own_ids or {-1}))
+    elif iso_ws is not None or exclude_ws:
         # Изоляция: только подразделения с активностью в текущем срезе
         # (у владельца — его пространство; у общего админа — вне пространств).
         active_dep_ids = {d for d in (set(spent_by) | set(recv_by)) if d is not None}
@@ -1442,7 +1485,7 @@ def department_report(
     month: int = Query(..., ge=1, le=12),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
     db: Session = Depends(get_db),
-    me: User = Depends(require_director_or_auditor),
+    me: User = Depends(require_reports_access),
 ):
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
     data = _build_department_report(
@@ -1450,6 +1493,7 @@ def department_report(
         hidden_ids=hidden_user_ids(db, me),
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+        only_employee_id=personal_report_user_id(db, me),
     )
     return _restrict_department_report(data, auditor_department_ids(db, me))
 
@@ -1460,7 +1504,7 @@ def department_report_export(
     month: int = Query(..., ge=1, le=12),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
     db: Session = Depends(get_db),
-    me: User = Depends(require_director_or_auditor),
+    me: User = Depends(require_reports_access),
 ):
     ensure_can_export(db, me)
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
@@ -1469,6 +1513,7 @@ def department_report_export(
         hidden_ids=hidden_user_ids(db, me),
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+        only_employee_id=personal_report_user_id(db, me),
     )
     data = _restrict_department_report(data, auditor_department_ids(db, me))
     sym = "$" if data["currency"] == "USD" else "с"
@@ -1650,7 +1695,7 @@ def category_report_xlsx(
     month: int = Query(..., ge=1, le=12),
     currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
     db: Session = Depends(get_db),
-    me: User = Depends(require_director_or_auditor),
+    me: User = Depends(require_reports_access),
 ):
     ensure_can_export(db, me)
     iso_ws, iso_members, exclude_ws = _ws_view(db, me)
@@ -1660,6 +1705,7 @@ def category_report_xlsx(
         hidden_ids=hidden_user_ids(db, me),
         mask_ws=False,
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
+        only_employee_id=personal_report_user_id(db, me),
     )
     sym = "$" if data["currency"] == "USD" else "с"
 

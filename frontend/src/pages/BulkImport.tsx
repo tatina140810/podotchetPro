@@ -36,8 +36,10 @@ interface Row {
   comment: string;            // комментарий к записи — для всех типов
   date: string;               // YYYY-MM-DD
   is_personal_contribution: boolean;  // только для expense — «Расход из личных средств в счёт подразделения»
-  receipt_url: string;        // только для expense — прикреплённый чек/документ (url после загрузки)
+  receipts: RowReceipt[];     // только для expense — прикреплённые чеки/документы (можно несколько)
 }
+
+interface RowReceipt { url: string; name: string }
 
 interface CategoryOpt { id: number; name: string; display_name?: string | null; parent_id?: number | null }
 
@@ -72,7 +74,7 @@ function makeEmptyRow(): Row {
     comment: "",
     date: new Date().toISOString().slice(0, 10),
     is_personal_contribution: false,
-    receipt_url: "",
+    receipts: [],
   };
 }
 
@@ -82,12 +84,23 @@ export default function BulkImport() {
   const { user } = useAuth();
   const { flag } = useSettings();
   const useSourceDirectory = flag("income_sources");
+  // Сотрудник с правом «Импорт истории» (не admin): бэкенд примет от него ТОЛЬКО
+  // свои расходы, поэтому тип и сотрудник в таблице зафиксированы, а админский
+  // блок «последние операции» ему недоступен (эндпоинт только для admin).
+  const selfOnly = !(user?.role === "admin" || user?.role === "superadmin");
 
   const [rows, setRows] = useState<Row[]>([makeEmptyRow()]);
+  // Свои строки заполняем собой — сотруднику выбирать некого.
+  useEffect(() => {
+    if (!selfOnly || !user) return;
+    setRows((prev) => prev.map((r) => (r.user_id ? r : { ...r, type: "expense", user_id: String(user.id) })));
+  }, [selfOnly, user?.id, rows.length]);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
   const [categories, setCategories] = useState<CategoryOpt[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [incomeSources, setIncomeSources] = useState<IncomeSource[]>([]);
+  // Прогресс загрузки чеков по индексу строки: "2/5"
+  const [uploading, setUploading] = useState<Record<number, string>>({});
   const [showConfirm, setShowConfirm] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
@@ -132,15 +145,35 @@ export default function BulkImport() {
     }
   }
 
-  async function onReceiptFile(idx: number, file: File | undefined) {
-    if (!file) return;
+  /** Несколько чеков на одну строку: грузим последовательно, уже загруженные
+   *  сохраняем даже если один файл упал (слабый канал — частый случай). */
+  async function onReceiptFiles(idx: number, files: FileList | null) {
+    const list = files ? Array.from(files) : [];
+    if (list.length === 0) return;
+    setUploading((prev) => ({ ...prev, [idx]: `0/${list.length}` }));
+    const done: RowReceipt[] = [];
     try {
-      const { url } = await uploadReceipt(file);
-      updateRow(idx, { receipt_url: url });
-      toast.show("success", "Чек прикреплён");
+      for (const file of list) {
+        const { url } = await uploadReceipt(file);
+        done.push({ url, name: file.name });
+        setUploading((prev) => ({ ...prev, [idx]: `${done.length}/${list.length}` }));
+      }
+      toast.show("success", done.length === 1 ? "Чек прикреплён" : `Прикреплено чеков: ${done.length}`);
     } catch (err: any) {
-      toast.show("error", err.message);
+      toast.show("error", err.message || "Не удалось загрузить часть чеков");
+    } finally {
+      if (done.length > 0) {
+        setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, receipts: [...r.receipts, ...done] } : r)));
+      }
+      setUploading((prev) => {
+        const { [idx]: _, ...rest } = prev;
+        return rest;
+      });
     }
+  }
+
+  function removeReceipt(idx: number, url: string) {
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, receipts: r.receipts.filter((x) => x.url !== url) } : r)));
   }
 
   // Сводка: количество и общая сумма (по amount, без конвертации — превью)
@@ -178,7 +211,7 @@ export default function BulkImport() {
           base.category_id = r.category_id ? Number(r.category_id) : null;
           base.description = r.comment || null;
           base.is_personal_contribution = !!r.is_personal_contribution;
-          base.receipt_url = r.receipt_url || null;
+          base.receipts = r.receipts.map((x) => ({ url: x.url, name: x.name || null }));
         } else if (r.type === "income") {
           base.received_by_id = Number(r.user_id);
           if (useSourceDirectory && r.source_id && r.source_id !== "manual") {
@@ -231,7 +264,9 @@ export default function BulkImport() {
   return (
     <div className="container">
       <div className="row between" style={{ marginBottom: 16 }}>
-        <h1 className="h1" style={{ margin: 0 }}>Импорт истории</h1>
+        <h1 className="h1" style={{ margin: 0 }}>
+          {selfOnly ? "Импорт моих расходов" : "Импорт истории"}
+        </h1>
         <div className="row" style={{ gap: 8 }}>
           <DuplicatesButton />
           <button className="ghost" onClick={() => nav(-1)}>← Назад</button>
@@ -267,10 +302,12 @@ export default function BulkImport() {
                     value={r.type}
                     onChange={(e) => updateRow(idx, { type: e.target.value as Op })}
                     onKeyDown={(e) => onKeyDown(e, idx)}
+                    disabled={selfOnly}
+                    title={selfOnly ? "Через импорт можно вносить только свои расходы" : undefined}
                   >
                     <option value="expense">Расход</option>
-                    <option value="income">Приход</option>
-                    <option value="topup">Выдача</option>
+                    {!selfOnly && <option value="income">Приход</option>}
+                    {!selfOnly && <option value="topup">Выдача</option>}
                   </select>
                 </td>
                 <td>
@@ -278,10 +315,12 @@ export default function BulkImport() {
                     value={r.user_id}
                     onChange={(e) => updateRow(idx, { user_id: e.target.value })}
                     onKeyDown={(e) => onKeyDown(e, idx)}
+                    disabled={selfOnly}
+                    title={selfOnly ? "Импорт вносится только на себя" : undefined}
                   >
                     <option value="">— выбрать —</option>
                     {user && <option value={user.id}>Себе ({user.name})</option>}
-                    {colleagues.map((u) => (
+                    {!selfOnly && colleagues.map((u) => (
                       <option key={u.id} value={u.id}>{u.name}</option>
                     ))}
                   </select>
@@ -398,29 +437,50 @@ export default function BulkImport() {
                   />
                   {r.type === "expense" && (
                     <div style={{ marginTop: 4, fontSize: 12 }}>
-                      {r.receipt_url ? (
-                        <span style={{ display: "flex", alignItems: "center", gap: 6, color: "var(--muted)" }}>
-                          <span>✓ чек прикреплён</span>
-                          <button
-                            type="button"
-                            className="ghost"
-                            style={{ fontSize: 11, padding: "1px 6px" }}
-                            onClick={() => updateRow(idx, { receipt_url: "" })}
-                          >
-                            убрать
-                          </button>
-                        </span>
-                      ) : (
-                        <label style={{ cursor: "pointer", color: "var(--accent)" }}>
-                          прикрепить чек/документ
-                          <input
-                            type="file"
-                            accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv"
-                            style={{ display: "none" }}
-                            onChange={(e) => onReceiptFile(idx, e.target.files?.[0])}
-                          />
-                        </label>
+                      {r.receipts.length > 0 && (
+                        <div className="grid" style={{ gap: 2, marginBottom: 4 }}>
+                          {r.receipts.map((rc) => (
+                            <div
+                              key={rc.url}
+                              className="row"
+                              style={{ justifyContent: "space-between", alignItems: "center", gap: 6, color: "var(--muted)" }}
+                            >
+                              <a
+                                href={rc.url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ color: "var(--accent)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}
+                                title={rc.name || rc.url}
+                              >
+                                {rc.name || "документ"}
+                              </a>
+                              <button
+                                type="button"
+                                className="ghost"
+                                style={{ fontSize: 11, padding: "1px 6px" }}
+                                onClick={() => removeReceipt(idx, rc.url)}
+                              >
+                                убрать
+                              </button>
+                            </div>
+                          ))}
+                        </div>
                       )}
+                      <label style={{ cursor: uploading[idx] ? "default" : "pointer", color: "var(--accent)" }}>
+                        {uploading[idx]
+                          ? `загружаю ${uploading[idx]}...`
+                          : r.receipts.length > 0
+                            ? "+ ещё чек/документ"
+                            : "прикрепить чек/документ"}
+                        <input
+                          type="file"
+                          multiple
+                          accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv"
+                          style={{ display: "none" }}
+                          disabled={!!uploading[idx]}
+                          onChange={(e) => { onReceiptFiles(idx, e.target.files); e.target.value = ""; }}
+                        />
+                      </label>
                     </div>
                   )}
                 </td>
@@ -521,7 +581,9 @@ export default function BulkImport() {
         </div>
       )}
 
-      <RecentOperations reloadKey={result?.created || 0} colleagues={colleagues} categories={categories} departments={departments} />
+      {!selfOnly && (
+        <RecentOperations reloadKey={result?.created || 0} colleagues={colleagues} categories={categories} departments={departments} />
+      )}
     </div>
   );
 }

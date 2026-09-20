@@ -112,6 +112,47 @@ def require_director_or_auditor(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+# ===================== Личные подразделения и личные отчёты =====================
+# Сотрудник с флагом can_create_departments заводит СВОИ подразделения
+# (departments.owner_id = его id) — их видит только он и роли оверсайта ниже.
+# Сотрудник с флагом can_view_own_reports открывает отчёты «по категориям» и
+# «по подразделениям», построенные ТОЛЬКО по его расходам.
+# Личные подразделения скрыты от других РЯДОВЫХ СОТРУДНИКОВ (accountable).
+# Директор/админ/аудитор их видят: иначе расходы в этих подразделениях пришлось бы
+# вырезать из общих отчётов, и суммы организации перестали бы сходиться.
+
+
+def can_see_personal_departments(user: User) -> bool:
+    """Роль видит ЛИЧНЫЕ подразделения всех сотрудников (директор/админ/аудитор)."""
+    return is_director_or_auditor(user)
+
+
+def can_view_reports(user: User) -> bool:
+    """Есть ли доступ к отчётам «по категориям» / «по подразделениям».
+    Директор/аудитор — по всей организации; сотрудник с флагом — только по своим
+    расходам (срез накладывается в services.permissions.personal_report_user_id)."""
+    return is_director_or_auditor(user) or bool(user.can_view_own_reports)
+
+
+def require_reports_access(user: User = Depends(get_current_user)) -> User:
+    if not can_view_reports(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к отчётам")
+    return user
+
+
+def can_bulk_import(user: User) -> bool:
+    """Доступ к «Импорту истории». admin/superadmin — полный (все типы операций,
+    за любого сотрудника). Сотрудник с флагом can_bulk_import — урезанный: только
+    свои расходы (ограничения накладывает routers/admin._enforce_self_import)."""
+    return user.role in ADMIN_ROLES or bool(user.can_bulk_import)
+
+
+def require_bulk_import(user: User = Depends(get_current_user)) -> User:
+    if not can_bulk_import(user):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Нет доступа к импорту истории")
+    return user
+
+
 def require_auditor(user: User = Depends(get_current_user)) -> User:
     if user.role not in ("admin", "auditor", "superadmin"):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Только аудитор или admin")

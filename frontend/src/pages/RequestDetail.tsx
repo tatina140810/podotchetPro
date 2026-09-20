@@ -13,6 +13,12 @@ import {
   type RequestStatus,
 } from "../api/requests";
 import { RequestReceipts } from "../components/RequestReceipts";
+import { ApproveRequestPanel } from "../components/ApproveRequestPanel";
+import { RequestItemsTable } from "../components/RequestItemsTable";
+import type { ApproveEdits } from "../api/requests";
+import { api } from "../api/client";
+import { listDepartments, type Department } from "../api/departments";
+import type { CatOpt } from "../components/CategoryPicker";
 
 const STATUS_RU: Record<RequestStatus, string> = {
   draft: "Черновик",
@@ -39,6 +45,10 @@ export default function RequestDetail() {
   const [busy, setBusy] = useState(false);
   const [rejecting, setRejecting] = useState(false);
   const [comment, setComment] = useState("");
+  // Режим «проверить и одобрить»: адресат правит поля перед одобрением.
+  const [checking, setChecking] = useState(false);
+  const [cats, setCats] = useState<CatOpt[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
 
   function reload() {
     setErr(null);
@@ -49,6 +59,12 @@ export default function RequestDetail() {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [requestId]);
+
+  // Справочники нужны только адресату (для панели проверки) — грузим один раз.
+  useEffect(() => {
+    api<CatOpt[]>("/api/categories").then(setCats).catch(() => {});
+    listDepartments().then(setDepartments).catch(() => {});
+  }, []);
 
   if (err) return <div className="container"><div className="card" style={{ color: "var(--danger)" }}>{err}</div></div>;
   if (!req) return <div className="container"><div className="muted">Загрузка...</div></div>;
@@ -80,11 +96,12 @@ export default function RequestDetail() {
     }
   }
 
-  async function doApprove() {
+  async function doApprove(edits?: ApproveEdits) {
     setBusy(true);
     try {
-      const updated = await approveRequest(requestId);
+      const updated = await approveRequest(requestId, edits);
       setReq(updated);
+      setChecking(false);
       toast.show("success", "Заявка одобрена");
     } catch (e: any) {
       toast.show("error", e.message);
@@ -215,45 +232,7 @@ export default function RequestDetail() {
       )}
 
       <h2 className="h2" style={{ marginTop: 18 }}>Строки</h2>
-      <div className="card" style={{ overflow: "auto" }}>
-        <table>
-          <thead>
-            <tr>
-              <th>Описание</th>
-              <th>Категория</th>
-              <th style={{ textAlign: "right" }}>Кол-во</th>
-              <th style={{ textAlign: "right" }}>Сумма</th>
-              <th style={{ textAlign: "right" }}>Итого</th>
-            </tr>
-          </thead>
-          <tbody>
-            {req.items.map((it) => {
-              const subtotal = Number(it.amount) * it.quantity;
-              return (
-                <tr key={it.id}>
-                  <td>{it.description}</td>
-                  <td className="muted">{it.category_name || "—"}</td>
-                  <td style={{ textAlign: "right" }}>{it.quantity}</td>
-                  <td style={{ textAlign: "right" }}>
-                    {Number(it.amount).toLocaleString("ru-RU")} {curLabel}
-                  </td>
-                  <td style={{ textAlign: "right", fontWeight: 600 }}>
-                    {subtotal.toLocaleString("ru-RU")} {curLabel}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-          <tfoot>
-            <tr>
-              <td colSpan={4} style={{ textAlign: "right", fontWeight: 600 }}>Итого по заявке:</td>
-              <td style={{ textAlign: "right", fontWeight: 700, fontSize: 16 }}>
-                {Number(req.total_amount).toLocaleString("ru-RU")} {curLabel}
-              </td>
-            </tr>
-          </tfoot>
-        </table>
-      </div>
+      <RequestItemsTable items={req.items} total={req.total_amount} curLabel={curLabel} />
 
       <div className="row" style={{ marginTop: 18, justifyContent: "flex-end", gap: 8 }}>
         {canDelete && (
@@ -262,17 +241,28 @@ export default function RequestDetail() {
         {canSubmit && (
           <button onClick={doSubmit} disabled={busy}>Отправить на одобрение</button>
         )}
-        {canApprove && (
+        {canApprove && !checking && (
           <>
             <button className="ghost" onClick={() => setRejecting((v) => !v)} disabled={busy}>
               Отклонить
             </button>
-            <button className="success" onClick={doApprove} disabled={busy}>
+            <button className="success" onClick={() => { setRejecting(false); setChecking(true); }} disabled={busy}>
               Одобрить
             </button>
           </>
         )}
       </div>
+
+      {checking && canApprove && (
+        <ApproveRequestPanel
+          req={req}
+          cats={cats}
+          departments={departments}
+          busy={busy}
+          onCancel={() => setChecking(false)}
+          onConfirm={(edits) => doApprove(edits)}
+        />
+      )}
 
       {rejecting && canApprove && (
         <div className="card" style={{ marginTop: 12 }}>

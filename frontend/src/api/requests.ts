@@ -117,8 +117,31 @@ export function submitRequest(id: number) {
   return api<MoneyRequest>(`/api/requests/${id}/submit`, { method: "POST" });
 }
 
-export function approveRequest(id: number) {
-  return api<MoneyRequest>(`/api/requests/${id}/approve`, { method: "POST" });
+/** Правки, которые адресат вносит прямо при одобрении. Всё необязательное:
+ *  без них — обычное одобрение. Сумма правится строками, итог считает сервер. */
+export interface ApproveEditItem {
+  id?: number;              // без id — новая строка
+  category_id?: number | null;
+  description: string;
+  amount: string | number;
+  quantity?: number;
+}
+
+export interface ApproveEdits {
+  title?: string;
+  currency?: string;
+  department_id?: number | null;
+  is_expense_on_approve?: boolean;
+  expense_category_id?: number | null;
+  comment?: string;
+  items?: ApproveEditItem[];
+}
+
+export function approveRequest(id: number, edits?: ApproveEdits) {
+  return api<MoneyRequest>(`/api/requests/${id}/approve`, {
+    method: "POST",
+    ...(edits ? { body: edits } : {}),
+  });
 }
 
 export function rejectRequest(id: number, comment: string) {

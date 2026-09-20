@@ -649,6 +649,30 @@ class MoneyRequestUpdate(BaseModel):
     comment: Optional[str] = Field(default=None, max_length=2000)
 
 
+class MoneyRequestApproveItem(BaseModel):
+    """Строка заявки в правках при одобрении. id — существующая строка (обновить),
+    без id — новая. Строки, не попавшие в список, удаляются."""
+    id: Optional[int] = None
+    category_id: Optional[int] = None
+    description: str = Field(..., min_length=1, max_length=500)
+    amount: Decimal = Field(..., gt=0)
+    quantity: int = Field(default=1, ge=1)
+
+
+class MoneyRequestApprove(BaseModel):
+    """Правки адресата в момент одобрения. Все поля необязательные: пустое тело —
+    обычное одобрение без изменений. Итог заявки считается из строк, отдельного
+    поля суммы нет (одна формула: total = Σ amount × quantity).
+    Заявитель и адресат не меняются — это адресность заявки."""
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    currency: Optional[str] = Field(default=None, pattern=CURRENCY_PATTERN)
+    department_id: Optional[int] = None
+    is_expense_on_approve: Optional[bool] = None
+    expense_category_id: Optional[int] = None
+    comment: Optional[str] = Field(default=None, max_length=2000)
+    items: Optional[List[MoneyRequestApproveItem]] = None
+
+
 class MoneyRequestReject(BaseModel):
     comment: str = Field(..., min_length=1, max_length=2000)
 

@@ -22,9 +22,12 @@ from models import (
     MoneyRequestItem,
     MoneyRequestReceipt,
     Notification,
+    RecordChangeLog,
     User,
 )
 from schemas import (
+    MoneyRequestApprove,
+    MoneyRequestApproveItem,
     MoneyRequestCreate,
     MoneyRequestItemIn,
     MoneyRequestItemOut,
@@ -34,6 +37,7 @@ from schemas import (
     MoneyRequestReject,
     MoneyRequestUpdate,
 )
+from services.audit import diff_snapshots, snapshot
 from services.push_service import build_payload, send_push_to_user_sync
 from services.permissions import (
     auditor_department_ids,
@@ -455,13 +459,122 @@ def submit_request(
     return _to_out(req)
 
 
+def _items_snapshot(req: MoneyRequest) -> list[dict]:
+    """Снимок строк заявки для журнала изменений (деньги — строкой, без float)."""
+    return [
+        {
+            "id": it.id,
+            "description": it.description,
+            "amount": str(it.amount),
+            "quantity": it.quantity,
+            "category_id": it.category_id,
+        }
+        for it in sorted(req.items, key=lambda x: x.id)
+    ]
+
+
+def _apply_approve_edits(
+    db: Session, req: MoneyRequest, me: User, payload: MoneyRequestApprove
+) -> None:
+    """Применить правки адресата к заявке ДО перевода в approved.
+
+    Порядок важен: сначала правки, потом смена статуса и создание Expense, —
+    расход создаётся уже из исправленных значений (сумма, категория,
+    подразделение, валюта). Всё, что изменилось, пишется в record_change_log.
+    """
+    before_cols = snapshot(req)
+    before_items = _items_snapshot(req)
+
+    if payload.title is not None:
+        req.title = payload.title
+    if payload.currency is not None:
+        req.currency = payload.currency.upper()
+    if payload.comment is not None:
+        req.comment = payload.comment
+    if payload.department_id is not None:
+        dep = db.get(Department, payload.department_id)
+        if not dep or dep.org_id != me.org_id or department_forbidden(db, me, payload.department_id):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+        req.department_id = payload.department_id
+    if payload.is_expense_on_approve is not None:
+        req.is_expense_on_approve = payload.is_expense_on_approve
+    if payload.expense_category_id is not None:
+        cat = db.get(Category, payload.expense_category_id)
+        if not cat or cat.org_id != me.org_id:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Категория расхода не найдена")
+        req.expense_category_id = payload.expense_category_id
+
+    # Строки: полная замена набора. Пришедшие с id — обновляются, без id —
+    # добавляются, отсутствующие в списке — убираются из заявки.
+    if payload.items is not None:
+        if not payload.items:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "В заявке должна остаться хотя бы одна строка")
+        _validate_categories(db, me, payload.items)
+        existing = {it.id: it for it in req.items}
+        kept: set[int] = set()
+        for row in payload.items:
+            if row.id is not None:
+                it = existing.get(row.id)
+                if it is None:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Строка {row.id} не из этой заявки")
+                it.description = row.description
+                it.amount = row.amount
+                it.quantity = row.quantity
+                it.category_id = row.category_id
+                kept.add(it.id)
+            else:
+                db.add(
+                    MoneyRequestItem(
+                        request_id=req.id,
+                        category_id=row.category_id,
+                        description=row.description,
+                        amount=row.amount,
+                        quantity=row.quantity,
+                    )
+                )
+        for it_id, it in existing.items():
+            if it_id not in kept:
+                db.delete(it)
+        db.flush()
+        db.refresh(req)
+        _recalc_total(db, req)
+
+    # Инвариант: «заявка на расход» без категории не создаст Expense — не пускаем.
+    if req.is_expense_on_approve and req.expense_category_id is None:
+        raise HTTPException(
+            status.HTTP_400_BAD_REQUEST,
+            "Для заявки на расход укажите категорию расхода",
+        )
+
+    diff = diff_snapshots(before_cols, snapshot(req))
+    after_items = _items_snapshot(req)
+    if after_items != before_items:
+        diff["items"] = {"old": before_items, "new": after_items}
+    if diff:
+        db.add(
+            RecordChangeLog(
+                org_id=req.org_id,
+                entity_type="money_request",
+                entity_id=req.id,
+                action="update",
+                changed_by=me.id,
+                diff=diff,
+            )
+        )
+
+
 @router.post("/{request_id}/approve", response_model=MoneyRequestOut)
 def approve_request(
     request_id: int,
     background_tasks: BackgroundTasks,
+    payload: Optional[MoneyRequestApprove] = None,
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
+    """Одобрить заявку. Необязательное тело — правки адресата: название, валюта,
+    подразделение, тип, категория расхода и строки. Правки применяются ДО
+    одобрения, поэтому и заявка, и созданный из неё расход получают новые
+    значения. Тело не передано → одобрение без изменений (старое поведение)."""
     req = db.get(MoneyRequest, request_id)
     if not req or req.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
@@ -469,6 +582,9 @@ def approve_request(
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Только адресат может одобрить эту заявку")
     if req.status != "pending":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Одобрить можно только pending")
+
+    if payload is not None:
+        _apply_approve_edits(db, req, me, payload)
 
     req.status = "approved"
     req.approved_at = datetime.now(tz=timezone.utc).replace(tzinfo=None)

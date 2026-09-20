@@ -104,3 +104,28 @@ def test_topup_has_no_receipts_marker(db, data):
     topups = [e for e in build_user_history_entries(db, data.org.id, data.emp.id) if e.kind == "topup"]
     assert len(topups) == 1
     assert topups[0].receipts_count is None
+
+
+def test_profile_requests_have_receipts_count(client, data, db):
+    """Карточка сотрудника: у одобренной заявки — число документов,
+    у неодобренной — None (в UI прочерк, т.к. чеки к ней не крепятся)."""
+    from conftest import auth_headers
+    from models import MoneyRequest, MoneyRequestReceipt
+
+    pending = MoneyRequest(
+        org_id=data.org.id, requester_id=data.emp.id, approver_id=data.boss.id,
+        status="pending", title="Ещё не одобрена", total_amount=Decimal("50"),
+        currency="KGS", created_at=datetime(2026, 9, 14, 10, 0),
+    )
+    db.add(pending)
+    db.commit()
+
+    r = client.get(
+        f"/api/employees/{data.emp.id}/profile?year=2026&month=9",
+        headers=auth_headers(data.boss),
+    )
+    assert r.status_code == 200, r.text
+    by_title = {x["comment"]: x for x in r.json()["requests_own"]}
+    assert by_title["Хозы с док"]["receipts_count"] == 3
+    assert by_title["Хозы без док"]["receipts_count"] == 0
+    assert by_title["Ещё не одобрена"]["receipts_count"] is None

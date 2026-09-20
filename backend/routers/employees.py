@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from auth import get_current_user, is_director_level, is_director_or_auditor
@@ -26,8 +27,10 @@ from models import (
     Department,
     EmployeeDepartment,
     Expense,
+    ExpenseReceipt,
     Income,
     MoneyRequest,
+    MoneyRequestReceipt,
     User,
 )
 from services.balance import compute_current_balance, load_org_rates
@@ -267,6 +270,26 @@ def _build_profile(db: Session, u: User, month: int, year: int, currency: str) -
             "comment": r.title,
         })
     requests_approved_by.sort(key=lambda r: r["date"], reverse=True)
+
+    # Сколько документов прикреплено к каждой заявке — одним запросом на обе пачки.
+    # Крепятся только к одобренным, поэтому у остальных статусов показываем прочерк
+    # (receipts_count=None), а не «нет».
+    _req_ids = [x["id"] for x in requests_own] + [x["id"] for x in requests_approved_by]
+    _req_receipts: dict[int, int] = {}
+    if _req_ids:
+        _req_receipts = {
+            rid: cnt
+            for rid, cnt in db.query(
+                MoneyRequestReceipt.request_id, func.count(MoneyRequestReceipt.id)
+            )
+            .filter(MoneyRequestReceipt.request_id.in_(set(_req_ids)))
+            .group_by(MoneyRequestReceipt.request_id)
+            .all()
+        }
+    for _row in (*requests_own, *requests_approved_by):
+        _row["receipts_count"] = (
+            _req_receipts.get(_row["id"], 0) if _row["status"] == "approved" else None
+        )
 
     # --- SUMMARY (в валюте отображения) ---
     received_total = round(sum(x["amount_kgs"] for x in received), 2)

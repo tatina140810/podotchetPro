@@ -285,8 +285,8 @@ function RequestTable({ rows, withEmployee, sym, fmt, displayCurrency, canEdit, 
   onSave: (id: number) => void; onCancel: () => void; onDelete: (r: any) => void;
 }) {
   const head = withEmployee
-    ? ["Дата", "Сотрудник", "Категория", "Сумма", "Решение", ""]
-    : ["Дата", "Категория", "Сумма", "Статус", "Комментарий", ""];
+    ? ["Дата", "Сотрудник", "Категория", "Сумма", "Решение", "Чеки", ""]
+    : ["Дата", "Категория", "Сумма", "Статус", "Комментарий", "Чеки", ""];
   return (
     <table>
       <thead><tr>{head.map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
@@ -309,6 +309,17 @@ function RequestTable({ rows, withEmployee, sym, fmt, displayCurrency, canEdit, 
                     : (r.comment || "")}
                 </td>
               )}
+              <td style={{ fontSize: 12, whiteSpace: "nowrap" }}>
+                {r.receipts_count == null ? (
+                  <span className="muted">—</span>
+                ) : r.receipts_count > 0 ? (
+                  <span style={{ color: "var(--success)", fontWeight: 600 }}>
+                    есть{r.receipts_count > 1 ? ` \u00b7 ${r.receipts_count}` : ""}
+                  </span>
+                ) : (
+                  <span style={{ color: "var(--danger)", fontWeight: 600 }}>нет</span>
+                )}
+              </td>
               <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                 {canEdit && (editing ? (
                   <>

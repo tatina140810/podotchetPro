@@ -69,7 +69,8 @@ def test_export_matches_list_without_filters(client):
 
     ws = _sheet(client.get(EXPORT_URL, headers=h))
     assert [c.value for c in ws[1]] == [
-        "Дата", "Тип", "Кто / Кому", "Сумма", "Валюта", "Категория / Источник", "Комментарий"
+        "Дата", "Тип", "Кто / Кому", "Сумма", "Валюта", "Форма расчёта",
+        "Категория / Источник", "Комментарий"
     ]
     assert len(_data_rows(ws)) == total
 

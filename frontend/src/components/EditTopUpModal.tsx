@@ -27,6 +27,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
     admin_id: String(topup.admin_id),
     category_id: topup.category_id ? String(topup.category_id) : "",
     department_id: topup.department_id ? String(topup.department_id) : "",
+    payment_method: topup.payment_method || "",
     date: topup.date ? topup.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
   const [busy, setBusy] = useState(false);
@@ -52,6 +53,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
         date: new Date(form.date).toISOString(),
         category_id: form.category_id ? Number(form.category_id) : null,
         department_id: form.department_id ? Number(form.department_id) : null,
+        payment_method: (form.payment_method || null) as "cash" | "bank" | null,
       });
       toast.show("success", "Выдача обновлена");
       onSaved();
@@ -113,6 +115,14 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
             <select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
               <option value="">— нет —</option>
               {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+            </select>
+          </div>
+          <div>
+            <label>Форма расчёта</label>
+            <select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>
+              <option value="">— не указано —</option>
+              <option value="cash">Наличный расчёт</option>
+              <option value="bank">Безналичный расчёт</option>
             </select>
           </div>
           <div>

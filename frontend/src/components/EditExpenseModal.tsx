@@ -16,6 +16,7 @@ interface Props {
     category_id: number | null;
     description: string | null;
     spent_at: string;
+    payment_method?: "cash" | "bank" | null;
     /** На кого оформлен расход. Есть не во всех списках — тогда селект сотрудника скрыт. */
     employee_id?: number | null;
     department_id?: number | null;
@@ -45,6 +46,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     amount: String(expense.amount),
     currency: (expense.currency || "KGS") as "KGS" | "USD" | "EUR" | "RUB",
     category_id: expense.category_id ? String(expense.category_id) : "",
+    payment_method: expense.payment_method || "",
     description: expense.description || "",
     spent_at: expense.spent_at ? expense.spent_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
@@ -114,6 +116,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
         amount: amt,
         currency: form.currency,
         category_id: form.category_id ? Number(form.category_id) : null,
+        payment_method: form.payment_method || null,
         description: form.description.trim() || null,
         spent_at: new Date(form.spent_at).toISOString(),
       };
@@ -187,6 +190,14 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
                 {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             )}
+          </div>
+          <div>
+            <label>Форма расчёта</label>
+            <select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>
+              <option value="">— не указано —</option>
+              <option value="cash">Наличный расчёт</option>
+              <option value="bank">Безналичный расчёт</option>
+            </select>
           </div>
           <div>
             <label>Дата</label>

@@ -34,6 +34,7 @@ interface Row {
   source: string;             // для income — текстовое поле «Источник» (свободный ввод)
   source_id: string;          // для income — выбор из справочника источников ("" / "manual" / id)
   comment: string;            // комментарий к записи — для всех типов
+  payment_method: "" | "cash" | "bank";  // форма расчёта: наличные / безнал
   date: string;               // YYYY-MM-DD
   is_personal_contribution: boolean;  // только для expense — «Расход из личных средств в счёт подразделения»
   receipts: RowReceipt[];     // только для expense — прикреплённые чеки/документы (можно несколько)
@@ -72,6 +73,7 @@ function makeEmptyRow(): Row {
     source: "",
     source_id: "",
     comment: "",
+    payment_method: "",
     date: new Date().toISOString().slice(0, 10),
     is_personal_contribution: false,
     receipts: [],
@@ -203,6 +205,7 @@ export default function BulkImport() {
           type: r.type,
           amount,
           currency: r.currency,
+          payment_method: r.payment_method || null,
           date: r.date ? new Date(r.date).toISOString() : null,
         } as any;
         if (r.type === "expense") {
@@ -288,6 +291,7 @@ export default function BulkImport() {
               <th style={{ width: 160 }}>Подразделение</th>
               <th style={{ width: 170, textAlign: "right" }}>Сумма</th>
               <th style={{ width: 90 }}>Валюта</th>
+              <th style={{ width: 130 }}>Расчёт</th>
               <th style={{ width: 180 }}>Категория / Источник</th>
               <th style={{ width: 220 }}>Комментарий</th>
               <th style={{ width: 130 }}>Дата</th>
@@ -362,6 +366,18 @@ export default function BulkImport() {
                     <option value="USD">USD</option>
                     <option value="EUR">EUR</option>
                     <option value="RUB">RUB</option>
+                  </select>
+                </td>
+                <td>
+                  <select
+                    value={r.payment_method}
+                    onChange={(e) => updateRow(idx, { payment_method: e.target.value as Row["payment_method"] })}
+                    onKeyDown={(e) => onKeyDown(e, idx)}
+                    title="Форма расчёта: наличные или безнал"
+                  >
+                    <option value="">— не указано —</option>
+                    <option value="cash">Наличные</option>
+                    <option value="bank">Безнал</option>
                   </select>
                 </td>
                 <td>
@@ -607,6 +623,7 @@ interface RecentOp {
   received_by_id?: number | null;
   user_id?: number | null;
   status?: string;
+  payment_method?: "cash" | "bank" | null;
   receipts?: { id: number | null; url: string; name: string | null }[];
 }
 
@@ -735,6 +752,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [departmentId, setDepartmentId] = useState<number | null>(null);
   const [kind, setKind] = useState("");  // "" = все типы; иначе expense|income|topup
+  // Форма расчёта: "" = все; cash | bank. У заявок её нет — они выпадают из списка.
+  const [paymentMethod, setPaymentMethod] = useState("");
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
   const [dateFrom, setDateFrom] = useState("");
@@ -761,6 +780,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     if (categoryId !== null) qs.set("category_id", String(categoryId));
     if (departmentId !== null) qs.set("department_id", String(departmentId));
     if (kind) qs.set("kind", kind);
+    if (paymentMethod) qs.set("payment_method", paymentMethod);
     const norm = (s: string) => s.replace(/[\s ]/g, "").replace(",", ".");
     const amtMin = parseFloat(norm(amountMin));
     const amtMax = parseFloat(norm(amountMax));
@@ -769,7 +789,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     if (dateFrom) qs.set("date_from", new Date(dateFrom).toISOString());
     if (dateTo) qs.set("date_to", new Date(dateTo).toISOString());
     return qs;
-  }, [employeeId, categoryId, departmentId, kind, amountMin, amountMax, dateFrom, dateTo]);
+  }, [employeeId, categoryId, departmentId, kind, paymentMethod, amountMin, amountMax, dateFrom, dateTo]);
 
   // Выбрать ВСЕ строки по текущему фильтру (по всем страницам) — чтобы нижняя
   // плашка показала общую сумму. Тянем страницами по 200 до total.
@@ -816,6 +836,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
       if (categoryId !== null) qs.set("category_id", String(categoryId));
       if (departmentId !== null) qs.set("department_id", String(departmentId));
       if (kind) qs.set("kind", kind);
+      if (paymentMethod) qs.set("payment_method", paymentMethod);
+    if (paymentMethod) qs.set("payment_method", paymentMethod);
       // Нормализуем: убираем пробелы (включая неразрывный 00A0) и заменяем запятую на точку.
       // Без этого "20 000" → parseFloat → 20, и фильтр пропускал записи <20k.
       const norm = (s: string) => s.replace(/[\s ]/g, "").replace(",", ".");
@@ -835,10 +857,10 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
         .catch((e) => setErr(e.message));
     }, 250);
     return () => clearTimeout(t);
-  }, [reloadKey, bump, page, employeeId, categoryId, departmentId, kind, amountMin, amountMax, dateFrom, dateTo]);
+  }, [reloadKey, bump, page, employeeId, categoryId, departmentId, kind, paymentMethod, amountMin, amountMax, dateFrom, dateTo]);
 
   // При смене фильтров — сбросить пагинацию на первую страницу
-  useEffect(() => { setPage(0); }, [employeeId, categoryId, departmentId, kind, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
+  useEffect(() => { setPage(0); }, [employeeId, categoryId, departmentId, kind, paymentMethod, amountMin, amountMax, dateFrom, dateTo, reloadKey, bump]);
 
   const KIND_LABEL: Record<string, string> = {
     expense: "Расход",
@@ -905,6 +927,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     setCategoryId(null);
     setDepartmentId(null);
     setKind("");
+    setPaymentMethod("");
     setAmountMin(""); setAmountMax("");
     setDateFrom(""); setDateTo("");
   }
@@ -1000,6 +1023,14 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
           </select>
         </div>
         <div>
+          <label>Форма расчёта</label>
+          <select value={paymentMethod} onChange={(e) => setPaymentMethod(e.target.value)}>
+            <option value="">Все</option>
+            <option value="cash">Наличные</option>
+            <option value="bank">Безнал</option>
+          </select>
+        </div>
+        <div>
           <label>Сумма от</label>
           <input value={amountMin} onChange={(e) => setAmountMin(e.target.value)} inputMode="decimal" placeholder="0" />
         </div>
@@ -1076,6 +1107,11 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
                   </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {o.category_name || o.source || "—"}
+                    {o.payment_method && (
+                      <div style={{ fontSize: 11, opacity: 0.75 }}>
+                        {o.payment_method === "cash" ? "наличные" : "безнал"}
+                      </div>
+                    )}
                   </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {o.description || o.note || ""}
@@ -1176,6 +1212,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             spent_at: editing.date,
             employee_id: editing.employee_id ?? null,
             department_id: editing.department_id ?? null,
+            payment_method: editing.payment_method ?? null,
           }}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); setBump((x) => x + 1); }}
@@ -1191,6 +1228,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             description: editing.description ?? null,
             received_by_id: editing.received_by_id,
             department_id: editing.department_id ?? null,
+            payment_method: editing.payment_method ?? null,
             date: editing.date,
           }}
           onClose={() => setEditing(null)}
@@ -1206,6 +1244,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             admin_name: editing.issued_by ?? null,
             user_id: editing.user_id,
             user_name: editing.who ?? null,
+            payment_method: editing.payment_method ?? null,
             amount: String(editing.amount),
             currency: editing.currency,
             amount_kgs: null,

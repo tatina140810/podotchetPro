@@ -394,6 +394,8 @@ class ExpenseCreate(BaseModel):
     # «Расход из личных средств в счёт подразделения»: оплата из личных средств без
     # подотчёта. НЕ создаёт приход — учитывается в агрегате подразделения как приход+расход.
     is_personal_contribution: bool = False
+    # Форма расчёта: cash (наличные) | bank (безнал). None = не указано.
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     # Источник оплаты: 'balance' (баланс сотрудника) | 'supplier_advance' (депозит).
     payment_source: str = Field(default="balance", pattern="^(balance|supplier_advance)$")
     # Обязателен при payment_source='supplier_advance' — с какого депозита списать.
@@ -407,6 +409,7 @@ class ExpenseUpdate(BaseModel):
     # «Импорте истории»). Доступна только директору/админу/аудитору: меняет балансы
     # двух сотрудников, поэтому фиксируется в record_change_log.
     employee_id: Optional[int] = None
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     amount: Optional[Decimal] = Field(default=None, gt=0)
     currency: Optional[str] = Field(default=None, max_length=8)
     description: Optional[str] = None
@@ -449,6 +452,8 @@ class ExpenseOut(BaseModel):
     id: int
     org_id: int
     employee_id: int
+    # Форма расчёта: cash | bank | None (не указано).
+    payment_method: Optional[str] = None
     advance_id: Optional[int] = None
     category_id: Optional[int] = None
     amount: Decimal
@@ -778,6 +783,7 @@ class BalanceTopUpCreate(BaseModel):
     category_id: Optional[int] = None
     # Подразделение — обязательно для новых пополнений (проверяется в роутере).
     department_id: Optional[int] = None
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     # «Кто выдал» — для добавления «передал дальше» от лица сотрудника (admin_id=issued_by).
     # Если не указан — текущий пользователь. Только auditor+ (проверка в роутере).
     issued_by_id: Optional[int] = None
@@ -789,6 +795,8 @@ class BalanceTopUpOut(BaseModel):
     id: int
     org_id: int
     admin_id: int
+    # Форма расчёта: cash | bank | None (не указано).
+    payment_method: Optional[str] = None
     admin_name: Optional[str] = None
     user_id: int
     user_name: Optional[str] = None
@@ -908,6 +916,8 @@ class BulkImportItem(BaseModel):
     source_id: Optional[int] = None           # для income (выбор из справочника источников)
     description: Optional[str] = None
     note: Optional[str] = None                # для topup
+    # Форма расчёта: cash | bank | None (не указано) — для всех трёх типов.
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     date: Optional[datetime] = None
     # «Расход из личных средств в счёт подразделения» (только для expense).
     is_personal_contribution: bool = False
@@ -970,6 +980,7 @@ class IncomeCreate(BaseModel):
     source_id: Optional[int] = None
     description: Optional[str] = None
     received_by_id: int
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     date: Optional[datetime] = None
     # on_behalf_of не вводим отдельно — для Income переопределение получателя уже
     # делается через received_by_id. created_by_id (=кто внёс) ставит роутер.
@@ -981,6 +992,8 @@ class IncomeOut(BaseModel):
     id: int
     org_id: int
     amount: Decimal
+    # Форма расчёта: cash | bank | None (не указано).
+    payment_method: Optional[str] = None
     currency: str
     amount_kgs: Optional[Decimal] = None  # КГС-эквивалент, зафиксированный при создании
     source: str
@@ -1002,12 +1015,14 @@ class IncomeUpdate(BaseModel):
     source_id: Optional[int] = None
     description: Optional[str] = None
     received_by_id: Optional[int] = None
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     # Подразделение прихода (в модели было всегда, в форме правки не хватало).
     department_id: Optional[int] = None
     date: Optional[datetime] = None
 
 
 class BalanceTopUpUpdate(BaseModel):
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
     amount: Optional[Decimal] = Field(default=None, gt=0)
     currency: Optional[str] = Field(default=None, pattern="^(KGS|USD|EUR|RUB)$")
     note: Optional[str] = Field(default=None, max_length=500)

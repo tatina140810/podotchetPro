@@ -14,6 +14,7 @@ export interface Income {
   created_by_name: string | null;
   date: string;
   created_at: string;
+  payment_method?: "cash" | "bank" | null;
 }
 
 export function listIncomes(params: {
@@ -41,6 +42,7 @@ export function createIncome(payload: {
   source_id?: number | null;
   description?: string | null;
   received_by_id: number;
+  payment_method?: "cash" | "bank" | null;
   date?: string;
 }): Promise<Income> {
   return api<Income>("/api/income", { method: "POST", body: payload });
@@ -60,6 +62,7 @@ export function updateIncome(
     description: string | null;
     received_by_id: number;
     department_id: number | null;
+    payment_method: "cash" | "bank" | null;
     date: string;
   }>
 ): Promise<Income> {

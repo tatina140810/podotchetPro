@@ -14,6 +14,7 @@ interface Props {
     description: string | null;
     received_by_id: number;
     department_id?: number | null;
+    payment_method?: "cash" | "bank" | null;
     date: string;
   };
   onClose: () => void;
@@ -30,6 +31,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
     source: income.source || "",
     description: income.description || "",
     received_by_id: String(income.received_by_id),
+    payment_method: income.payment_method || "",
     department_id: income.department_id != null ? String(income.department_id) : "",
     date: income.date ? income.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
@@ -60,6 +62,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
         description: form.description.trim() || null,
         received_by_id: Number(form.received_by_id),
         department_id: form.department_id ? Number(form.department_id) : null,
+        payment_method: (form.payment_method || null) as "cash" | "bank" | null,
         date: new Date(form.date).toISOString(),
       });
       toast.show("success", "Приход обновлён");
@@ -118,6 +121,14 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
                 {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
               </select>
             )}
+          </div>
+          <div>
+            <label>Форма расчёта</label>
+            <select value={form.payment_method} onChange={(e) => setForm({ ...form, payment_method: e.target.value })}>
+              <option value="">— не указано —</option>
+              <option value="cash">Наличный расчёт</option>
+              <option value="bank">Безналичный расчёт</option>
+            </select>
           </div>
           <div>
             <label>Дата</label>

@@ -397,6 +397,12 @@ class Expense(Base, SoftDeleteMixin):
     supplier_advance_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("supplier_advances.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Форма расчёта: 'cash' (наличные) | 'bank' (безнал). NULL = не указано
+    # (записи до миграции). Определяет, в какой лист Google-таблицы «Локомотив»
+    # уходит запись: bank → «Банк», cash → «Нал».
+    payment_method: Mapped[Optional[str]] = mapped_column(
+        String(8), nullable=True, index=True
+    )
     spent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
@@ -671,6 +677,12 @@ class BalanceTopUp(Base, SoftDeleteMixin):
     workspace_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("project_workspaces.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Форма расчёта: 'cash' (наличные) | 'bank' (безнал). NULL = не указано
+    # (записи до миграции). Определяет, в какой лист Google-таблицы «Локомотив»
+    # уходит запись: bank → «Банк», cash → «Нал».
+    payment_method: Mapped[Optional[str]] = mapped_column(
+        String(8), nullable=True, index=True
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     admin: Mapped[User] = relationship(foreign_keys=[admin_id])
@@ -739,6 +751,12 @@ class Income(Base, SoftDeleteMixin):
     # приход»), чтобы баланс подразделения сходился.
     department_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("departments.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    # Форма расчёта: 'cash' (наличные) | 'bank' (безнал). NULL = не указано
+    # (записи до миграции). Определяет, в какой лист Google-таблицы «Локомотив»
+    # уходит запись: bank → «Банк», cash → «Нал».
+    payment_method: Mapped[Optional[str]] = mapped_column(
+        String(8), nullable=True, index=True
     )
     date: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
@@ -1043,4 +1061,47 @@ class RecordChangeLog(Base):
 
     __table_args__ = (
         sa.Index("ix_rcl_entity", "entity_type", "entity_id"),
+    )
+
+
+class SheetsOutbox(Base):
+    """Очередь выгрузки операций в Google-таблицу «Локомотив».
+
+    Строка ставится в очередь в той же транзакции, что и сама операция (расход /
+    приход / выдача), а отправляется отдельным воркером — «запись в БД + вызов
+    наружу в одной транзакции» давала бы либо потерянные строки, либо дубли.
+    UNIQUE (entity_type, entity_id) — операция попадает в таблицу ровно один раз.
+
+    status: pending (ждёт отправки) | sent (строка добавлена) |
+            skipped (не подлежит выгрузке, напр. не та валюта) | failed (исчерпаны попытки).
+    """
+    __tablename__ = "sheets_outbox"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    org_id: Mapped[int] = mapped_column(
+        ForeignKey("organizations.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    entity_type: Mapped[str] = mapped_column(String(16), nullable=False)  # expense|income|topup
+    entity_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    sheet: Mapped[str] = mapped_column(String(16), nullable=False)        # bank|cash|salary
+    op_date: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    amount: Mapped[float] = mapped_column(Numeric(14, 2), nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending", server_default="pending", index=True
+    )
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    sent_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        UniqueConstraint("entity_type", "entity_id", name="uq_sheets_outbox_entity"),
+        CheckConstraint("sheet IN ('bank','cash','salary')", name="ck_sheets_outbox_sheet"),
+        CheckConstraint(
+            "status IN ('pending','sent','skipped','failed')", name="ck_sheets_outbox_status"
+        ),
     )

@@ -45,6 +45,7 @@ from schemas import (
 )
 from services.audit import log_delete, log_update, snapshot
 from services.exchange import get_current_rate
+from services.sheets_sync import enqueue_expense
 from services.soft_delete import soft_delete
 from services.permissions import (
     auditor_department_ids,
@@ -470,6 +471,7 @@ def create_expense(
         to_user_id=recipient.id if recipient else None,
         expense_type="transfer" if recipient else "expense",
         is_personal_contribution=payload.is_personal_contribution and recipient is None,
+        payment_method=payload.payment_method,
         payment_source="supplier_advance" if pay_from_advance else "balance",
         supplier_advance_id=payload.supplier_advance_id if pay_from_advance else None,
         spent_at=payload.spent_at or datetime.utcnow(),
@@ -506,9 +508,14 @@ def create_expense(
             note=f"Из расхода: {payload.description or 'без описания'}",
             date=payload.spent_at or datetime.utcnow(),
             department_id=department_id,
+            payment_method=payload.payment_method,
             # Привязка к пространству получателя — деньги попадают в его учёт.
             workspace_id=member_active_workspace_id(db, recipient.id, me.org_id),
         ))
+
+    # Очередь выгрузки в Google-таблицу — в ТОЙ ЖЕ транзакции (см. services/sheets_sync).
+    db.flush()  # нужен e.id
+    enqueue_expense(db, e)
 
     db.commit()
     db.refresh(e)

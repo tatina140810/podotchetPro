@@ -11,7 +11,7 @@ from decimal import Decimal
 from typing import Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill
@@ -29,9 +29,11 @@ from schemas import (
 )
 from services.exchange import get_current_rate
 from services.plan_limits import ensure_can_export
+from services.sheets_sync import enqueue_expense, enqueue_income, enqueue_topup
 from services.permissions import (
     department_forbidden,
     hidden_user_ids,
+    resolve_department,
     member_active_workspace_id,
     owner_isolation_ws_id,
     workspace_details_hidden,
@@ -54,13 +56,17 @@ def _resolve_amount_kgs(
     return amount * rate
 
 
-def _resolve_department(db: Session, admin: User, item: BulkImportItem) -> int:
-    """Подразделение обязательно для expense в импорте. Возвращает его id."""
-    if item.department_id is None:
+def _resolve_department(db: Session, admin: User, item: BulkImportItem, owner: User) -> int:
+    """Подразделение обязательно для expense в импорте. Возвращает его id.
+
+    Жёсткая привязка сотрудника (users.forced_department_id) сильнее того, что
+    выбрано в строке импорта — как и в обычной форме расхода."""
+    department_id = resolve_department(owner, admin, item.department_id)
+    if department_id is None:
         raise ValueError("department_id обязателен")
-    dep = db.get(Department, item.department_id)
+    dep = db.get(Department, department_id)
     if not dep or dep.org_id != admin.org_id:
-        raise ValueError(f"Подразделение id={item.department_id} не найдено")
+        raise ValueError(f"Подразделение id={department_id} не найдено")
     return dep.id
 
 
@@ -77,7 +83,7 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         cat = db.get(Category, item.category_id)
         if not cat or cat.org_id != admin.org_id:
             raise ValueError(f"Категория id={item.category_id} не найдена")
-    department_id = _resolve_department(db, admin, item)
+    department_id = _resolve_department(db, admin, item, employee)
     amount_kgs = _resolve_amount_kgs(db, admin.org_id, item.amount, item.currency)
     if amount_kgs is None:
         raise ValueError(f"Курс {item.currency}/KGS не установлен")
@@ -103,10 +109,13 @@ def _create_expense(db: Session, admin: User, item: BulkImportItem) -> None:
         # Помечаем по УЧАСТНИКУ-сотруднику (его пространство), а не по импортёру.
         workspace_id=member_active_workspace_id(db, employee.id, admin.org_id),
         is_personal_contribution=bool(item.is_personal_contribution),
+        payment_method=item.payment_method,
         receipt_url=receipts[0][0] if receipts else None,  # legacy-поле = первый чек
         spent_at=item.date or datetime.utcnow(),
     )
     db.add(e)
+    db.flush()
+    enqueue_expense(db, e)
     # Чеки/документы, если приложены: дублируем в expense_receipts (единый источник галереи).
     if receipts:
         db.flush()  # нужен e.id
@@ -154,9 +163,13 @@ def _create_income(db: Session, admin: User, item: BulkImportItem) -> None:
         description=item.description,
         received_by_id=receiver.id,
         created_by_id=admin.id,
+        payment_method=item.payment_method,
+        department_id=resolve_department(receiver, admin, None),
         date=item.date or datetime.utcnow(),
     )
     db.add(inc)
+    db.flush()
+    enqueue_income(db, inc)
 
 
 def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
@@ -202,11 +215,13 @@ def _create_topup(db: Session, admin: User, item: BulkImportItem) -> None:
         note=item.note,
         date=item.date or datetime.utcnow(),
         category_id=item.category_id,
-        department_id=department_id,
+        department_id=resolve_department(target, admin, department_id),
+        payment_method=item.payment_method,
         workspace_id=iso,          # владелец импортирует в своё пространство
     )
     db.add(t)
     db.flush()
+    enqueue_topup(db, t)
     # Если категория не «Подотчёт» — авто-Expense получателю (как в /topup endpoint).
     from routers.transfers import _sync_topup_expense
     _sync_topup_expense(db, t)
@@ -356,6 +371,7 @@ def _recent_operations_rows(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     kind: Optional[str] = None,
+    payment_method: Optional[str] = None,
 ) -> tuple[list[dict], int]:
     """Единая выборка «последних операций» (Expense + Income + TopUp + Request)
     с фильтрами и правами. Используется и списком на экране импорта, и Excel-выгрузкой,
@@ -386,6 +402,13 @@ def _recent_operations_rows(
     # при фильтре по подразделению приходы НЕ исключаем — фильтруем их по department_id ниже.
     include_income = category_id is None and (kind is None or kind == "income")
     include_requests = category_id is None and (kind is None or kind == "request")
+    # Форма расчёта (нал/безнал) есть у расхода, прихода и выдачи; у заявки её нет,
+    # поэтому при таком фильтре заявки из списка выпадают.
+    if payment_method is not None:
+        eq = eq.filter(Expense.payment_method == payment_method)
+        iq = iq.filter(Income.payment_method == payment_method)
+        tq = tq.filter(BalanceTopUp.payment_method == payment_method)
+        include_requests = False
 
     if employee_id is not None:
         eq = eq.filter(Expense.employee_id == employee_id)
@@ -474,6 +497,8 @@ def _recent_operations_rows(
             "status": e.status,
             "is_personal_contribution": bool(e.is_personal_contribution),
             "expense_type": e.expense_type,
+            "department_id": e.department_id,
+            "payment_method": e.payment_method,
             "receipts": recs,
         })
 
@@ -489,6 +514,8 @@ def _recent_operations_rows(
                 "currency": i.currency,
                 "description": i.description,
                 "source": i.source,
+                "department_id": i.department_id,
+                "payment_method": i.payment_method,
             })
 
     topup_rows = tq.order_by(BalanceTopUp.date.desc()).limit(take).all() if show_topup else []
@@ -507,6 +534,7 @@ def _recent_operations_rows(
             "currency": t.currency,
             "note": t.note,
             "category_name": t.category.name if t.category else None,
+            "payment_method": t.payment_method,
         })
 
     if include_requests:
@@ -543,6 +571,7 @@ def recent_operations(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     kind: Optional[str] = None,
+    payment_method: Optional[str] = Query(default=None, pattern="^(cash|bank)$"),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -561,6 +590,7 @@ def recent_operations(
         date_from=date_from,
         date_to=date_to,
         kind=kind,
+        payment_method=payment_method,
     )
     return {
         "items": page,
@@ -572,6 +602,8 @@ def recent_operations(
 # Потолок строк одной выгрузки: экспорт идёт одним запросом в память,
 # без него большой org мог бы уронить сервер на openpyxl.
 RECENT_OPS_EXPORT_MAX_ROWS = 10000
+
+_PAYMENT_METHOD_RU = {"cash": "Наличные", "bank": "Безнал"}
 
 _RECENT_OPS_KIND_RU = {
     "expense": "Расход",
@@ -602,6 +634,7 @@ def recent_operations_export(
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     kind: Optional[str] = None,
+    payment_method: Optional[str] = Query(default=None, pattern="^(cash|bank)$"),
     db: Session = Depends(get_db),
     admin: User = Depends(require_admin),
 ):
@@ -620,13 +653,15 @@ def recent_operations_export(
         date_from=date_from,
         date_to=date_to,
         kind=kind,
+        payment_method=payment_method,
     )
 
     wb = Workbook()
     ws = wb.active
     ws.title = "Операции"
 
-    headers = ["Дата", "Тип", "Кто / Кому", "Сумма", "Валюта", "Категория / Источник", "Комментарий"]
+    headers = ["Дата", "Тип", "Кто / Кому", "Сумма", "Валюта", "Форма расчёта",
+               "Категория / Источник", "Комментарий"]
     ws.append(headers)
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="4F46E5")
@@ -645,6 +680,7 @@ def recent_operations_export(
             _recent_op_counterparty(r),
             float(r["amount"]) if r.get("amount") is not None else 0,
             r.get("currency") or "",
+            _PAYMENT_METHOD_RU.get(r.get("payment_method"), ""),
             r.get("category_name") or r.get("source") or "—",
             r.get("description") or r.get("note") or "",
         ])
@@ -662,7 +698,7 @@ def recent_operations_export(
         ws.append([])
         total_font = Font(bold=True)
         for cur, tot in sorted(totals.items()):
-            ws.append(["", "", "ИТОГО", float(tot), cur, "", ""])
+            ws.append(["", "", "ИТОГО", float(tot), cur, "", "", ""])
             for cell in ws[ws.max_row]:
                 cell.font = total_font
 
@@ -670,7 +706,7 @@ def recent_operations_export(
         ws.append([])
         ws.append(["", "", f"Показаны первые {len(rows)} из {total} операций — сузьте фильтр"])
 
-    widths = [12, 12, 30, 16, 8, 26, 44]
+    widths = [12, 12, 30, 16, 8, 14, 26, 44]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = w
     for row_idx in range(2, ws.max_row + 1):

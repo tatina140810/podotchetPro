@@ -38,6 +38,9 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
   // Источник оплаты: с баланса (по умолчанию) или с депозита у поставщика.
   const [advances, setAdvances] = useState<SupplierAdvance[]>([]);
   const [paySource, setPaySource] = useState<"balance" | "supplier_advance">("balance");
+  // Форма расчёта: наличные / безнал. Нужна для отчётности и для выгрузки новых
+  // записей в Google-таблицу «Локомотив» (безнал → лист «Банк», нал → «Нал»).
+  const [payMethod, setPayMethod] = useState<"cash" | "bank">("cash");
   const [advanceId, setAdvanceId] = useState<string>("");
   const [spec, setSpec] = useState<any>(null);
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
@@ -197,6 +200,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         spent_at: form.spent_at ? new Date(form.spent_at).toISOString() : null,
         on_behalf_of_user_id: isAdmin && onBehalfOf ? Number(onBehalfOf) : null,
         is_personal_contribution: form.is_personal_contribution,
+        payment_method: payMethod,
         payment_source: paySource,
         supplier_advance_id: paySource === "supplier_advance" && advanceId ? Number(advanceId) : null,
       },
@@ -234,6 +238,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
         currency: form.currency as "KGS" | "USD" | "EUR" | "RUB",
         note: form.description.trim() || null,
         category_id: form.category_id ? Number(form.category_id) : null,
+        payment_method: payMethod,
         issued_by_id: isAdmin && onBehalfOf ? Number(onBehalfOf) : null,
       });
     } else {
@@ -261,6 +266,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
       source: form.source.trim(),
       description: form.description.trim() || null,
       received_by_id: receiverId,
+      payment_method: payMethod,
       date: form.spent_at ? new Date(form.spent_at).toISOString() : undefined,
     });
     const msgPart = onBehalfName ? ` (от лица ${onBehalfName})` : "";
@@ -488,6 +494,28 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             )}
           </div>
         )}
+
+        <div>
+          <label>Форма расчёта</label>
+          <div className="row" style={{ gap: 0 }}>
+            <button
+              type="button"
+              className={payMethod === "cash" ? "" : "ghost"}
+              onClick={() => setPayMethod("cash")}
+              style={{ flex: 1, borderRadius: "10px 0 0 10px", fontSize: 13 }}
+            >
+              Наличный расчёт
+            </button>
+            <button
+              type="button"
+              className={payMethod === "bank" ? "" : "ghost"}
+              onClick={() => setPayMethod("bank")}
+              style={{ flex: 1, borderRadius: "0 10px 10px 0", fontSize: 13 }}
+            >
+              Безналичный расчёт
+            </button>
+          </div>
+        </div>
 
         <div className="row" style={{ gap: 8 }}>
           <div style={{ flex: 2 }}>

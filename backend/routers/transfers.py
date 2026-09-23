@@ -35,6 +35,7 @@ from services.permissions import (
     owner_isolation_ws_id,
     workspace_member_ids,
 )
+from services.sheets_sync import enqueue_topup
 from services.push_service import build_payload, send_push_to_user_sync
 
 
@@ -414,6 +415,7 @@ def topup_user(
         date=payload.date or _dt.utcnow(),
         category_id=payload.category_id,
         department_id=department_id,
+        payment_method=payload.payment_method,
         # Привязка к активному пространству получателя — как у выдач (create_advance).
         # Так выдача с категорией и авто-расход попадают в пространство участника.
         # В основном пространстве получатель не участник → None (поведение не меняется).
@@ -421,6 +423,7 @@ def topup_user(
     )
     db.add(t)
     db.flush()  # нужен t.id и связь категории до _sync_topup_expense
+    enqueue_topup(db, t)
     # Если категория не «Подотчёт» (не is_system) — создаём Expense получателю автоматом.
     _sync_topup_expense(db, t)
     db.add(
@@ -504,7 +507,7 @@ def update_topup(
                 or department_forbidden(db, admin, data["department_id"])):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
         t.department_id = data["department_id"]
-    for f in ("amount", "note", "date", "category_id", "currency"):
+    for f in ("amount", "note", "date", "category_id", "currency", "payment_method"):
         if f in data:
             setattr(t, f, data[f])
     # При смене amount/currency пересчитываем amount_kgs по текущему курсу.

@@ -26,6 +26,7 @@ from services.permissions import (
     forced_department_id,
     hidden_user_ids,
 )
+from services.sheets_sync import enqueue_income
 from services.soft_delete import soft_delete
 
 
@@ -105,9 +106,12 @@ def create_income(
         description=payload.description,
         received_by_id=receiver.id,
         created_by_id=me.id,
+        payment_method=payload.payment_method,
         date=payload.date or datetime.utcnow(),
     )
     db.add(inc)
+    db.flush()
+    enqueue_income(db, inc)
     db.commit()
     db.refresh(inc)
     return _to_out(inc)
@@ -249,7 +253,7 @@ def update_income(
                 raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
         inc.department_id = data["department_id"]
 
-    for f in ("description", "date"):
+    for f in ("description", "date", "payment_method"):
         if f in data:
             setattr(inc, f, data[f])
 

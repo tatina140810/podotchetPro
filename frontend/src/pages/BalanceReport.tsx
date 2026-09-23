@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api/client";
-import { useDisplayCurrency } from "../context/CurrencyContext";
+import { useDisplayCurrency, currencySymbol, currencyLabel } from "../context/CurrencyContext";
 
 interface Op {
   type: "expense" | "income" | "transfer";
@@ -33,7 +33,7 @@ interface Report {
   closing_balance: number;
   days: DayBlock[];
   period_total: { income: number; expenses: number; result: number };
-  currency: "KGS" | "USD";
+  currency: string;  // валюта отображения, пришедшая с бэкенда
   rate: number | null;
 }
 
@@ -78,7 +78,7 @@ export default function BalanceReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [from, to, display]);
 
-  const sym = data?.currency === "USD" ? "$" : "с";
+  const sym = currencySymbol(data?.currency);
 
   return (
     <div className="container">
@@ -97,7 +97,7 @@ export default function BalanceReport() {
             <input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
           </div>
           <div className="muted" style={{ fontSize: 12 }}>
-            Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b> — меняется в шапке.
+            Валюта: <b>{currencyLabel(display)}</b> — меняется в шапке.
             <br />Остаток org = Σ Income − Σ Expense (передачи не влияют).
           </div>
         </div>

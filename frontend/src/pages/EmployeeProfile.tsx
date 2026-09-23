@@ -39,8 +39,10 @@ export default function EmployeeProfile() {
   const [month, setMonth] = useState(Number(sp.get("month")) || today.getMonth() + 1);
   const [year, setYear] = useState(Number(sp.get("year")) || today.getFullYear());
   // Валюта профиля: «Авто» = родная валюта сотрудника (бэкенд смотрит все его операции).
-  // Если глобальный тумблер стоит на $, стартуем с $.
-  const [cur, setCur] = useState<ProfileCurrencyParam>(display === "USD" ? "USD" : "auto");
+  // Если глобальный тумблер стоит на $ или ₽ — стартуем с него.
+  const [cur, setCur] = useState<ProfileCurrencyParam>(
+    display === "KGS" ? "auto" : (display as ProfileCurrencyParam)
+  );
   const [data, setData] = useState<EmployeeProfile | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<SectionKey>>(new Set());

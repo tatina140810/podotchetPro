@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
-import { useDisplayCurrency } from "../context/CurrencyContext";
+import { useDisplayCurrency, currencySymbol, currencyLabel } from "../context/CurrencyContext";
 import { listDepartments, type Department } from "../api/departments";
 import { isDirectorOrAuditor, useAuth } from "../context/AuthContext";
 
@@ -35,7 +35,7 @@ interface Report {
   total_expenses: number;
   total_income: number;
   result: number;
-  currency: "KGS" | "USD";
+  currency: string;  // валюта отображения, пришедшая с бэкенда
   rate: number | null;
 }
 
@@ -102,7 +102,7 @@ export default function CategoryReport() {
     }
   }
 
-  const sym = data?.currency === "USD" ? "$" : "с";
+  const sym = currencySymbol(data?.currency);
 
   function renderSection(title: string, rows: CategoryRow[], subtotal: number, prefix: string) {
     return (
@@ -224,7 +224,7 @@ export default function CategoryReport() {
             </select>
           </div>
           <div className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
-            Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b>.{" "}
+            Валюта: <b>{currencyLabel(display)}</b>.{" "}
             {personal ? "Только ваши расходы." : "Без имён сотрудников — только цифры."}
           </div>
         </div>

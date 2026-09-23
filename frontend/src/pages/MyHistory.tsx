@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
 import { useAuth } from "../context/AuthContext";
+import { currencySymbol } from "../context/CurrencyContext";
 
 // Соответствует _KIND_RU на бэкенде (routers/reports.py).
 const KIND_RU: Record<string, string> = {
@@ -33,7 +34,7 @@ interface BalanceDetails {
 }
 
 function fmt(amount: number, currency: string): string {
-  const suffix = currency === "KGS" ? "с" : currency === "USD" ? "$" : currency;
+  const suffix = currencySymbol(currency);
   const sign = amount > 0 ? "+" : "";
   return `${sign}${Math.round(amount).toLocaleString("ru-RU")} ${suffix}`;
 }

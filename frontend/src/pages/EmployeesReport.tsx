@@ -2,7 +2,7 @@ import { Fragment, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
-import { useDisplayCurrency } from "../context/CurrencyContext";
+import { useDisplayCurrency, currencySymbol, currencyLabel } from "../context/CurrencyContext";
 import { listDepartments, type Department } from "../api/departments";
 import EmployeeDetailRows from "./EmployeeDetailRows";
 
@@ -22,7 +22,7 @@ interface Report {
   date_from?: string;
   date_to?: string;
   rows: EmployeeRow[];
-  currency: "KGS" | "USD";
+  currency: string;  // валюта отображения, пришедшая с бэкенда
   rate: number | null;
 }
 
@@ -142,7 +142,7 @@ export default function EmployeesReport() {
     }
   }
 
-  const sym = data?.currency === "USD" ? "$" : "с";
+  const sym = currencySymbol(data?.currency);
 
   return (
     <div className="container">
@@ -204,7 +204,7 @@ export default function EmployeesReport() {
             </select>
           </div>
           <div className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
-            Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b> — меняется тумблером в шапке.
+            Валюта: <b>{currencyLabel(display)}</b> — меняется тумблером в шапке.
             <br />Остаток — накопительный к концу периода (переходит из месяца в месяц).
           </div>
         </div>

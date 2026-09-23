@@ -250,6 +250,13 @@ def _period_label(date_from: Optional[datetime], date_to: Optional[datetime]) ->
 
 _ALLOWED_CURRENCIES = ("KGS", "USD", "EUR", "RUB")
 
+# Символы для заголовков Excel-выгрузок (суммы уже сконвертированы в эту валюту).
+_CURRENCY_SYMBOLS = {"KGS": "с", "USD": "$", "EUR": "€", "RUB": "₽"}
+
+
+def _symbol(currency: str) -> str:
+    return _CURRENCY_SYMBOLS.get(currency, "с")
+
 
 def _resolve_currency(currency: Optional[str]) -> str:
     """Валюта отчёта. По умолчанию KGS."""
@@ -709,10 +716,14 @@ def _resolve_report_range(
     raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите месяц и год или период «с/по»")
 
 
-def _maybe_convert_usd(kgs_value: float, display_currency: str, usd_rate: Optional[Decimal]) -> float:
-    """KGS → USD по курсу, если просят USD и курс задан. Иначе остаётся в KGS."""
-    if display_currency == "USD" and usd_rate and usd_rate > 0:
-        return round(kgs_value / float(usd_rate), 2)
+def _to_display(kgs_value: float, display_currency: str, disp_rate: Optional[Decimal]) -> float:
+    """KGS → валюта отображения (USD/EUR/RUB) по курсу этой валюты к сому.
+
+    disp_rate — сколько сомов за 1 единицу валюты (ExchangeRate.rate валюта→KGS).
+    Если валюта не сом, а курса нет — возвращаем сомы (цифры не должны пропадать;
+    вызывающий отдаёт в ответе фактическую валюту, см. поле "currency")."""
+    if display_currency != "KGS" and disp_rate and disp_rate > 0:
+        return round(kgs_value / float(disp_rate), 2)
     return round(kgs_value, 2)
 
 
@@ -731,7 +742,7 @@ def _build_category_report(
     only_employee_id — личный отчёт сотрудника: в расход попадают ТОЛЬКО его
     расходы, приходы организации не показываются вовсе."""
     rates = load_org_rates(db, org_id)
-    usd_rate = rates.get("USD")
+    disp_rate = rates.get(display_currency)
     start, end = _month_range(year, month)
     expense_expr = to_kgs_expr(Expense.amount, Expense.currency, rates)
     income_expr = to_kgs_expr(Income.amount, Income.currency, rates)
@@ -817,17 +828,17 @@ def _build_category_report(
             "category_id": cat_id,
             "category": cat_name,
             "department": cat_dept,
-            "amount": _maybe_convert_usd(total_kgs, display_currency, usd_rate),
+            "amount": _to_display(total_kgs, display_currency, disp_rate),
             "count": len(items),
             "items": [
-                {**i, "amount_kgs": _maybe_convert_usd(i["amount_kgs"], display_currency, usd_rate)}
+                {**i, "amount_kgs": _to_display(i["amount_kgs"], display_currency, disp_rate)}
                 for i in items
             ],
         }
         total_expenses += total_kgs
         (operational if is_op else other).append(row)
 
-    total_expenses_display = _maybe_convert_usd(total_expenses, display_currency, usd_rate)
+    total_expenses_display = _to_display(total_expenses, display_currency, disp_rate)
     for r in operational + other:
         r["percent"] = round(r["amount"] / total_expenses_display * 100, 1) if total_expenses_display else 0.0
     operational.sort(key=lambda x: x["amount"], reverse=True)
@@ -850,7 +861,7 @@ def _build_category_report(
         if iso_members is not None:  # изоляция: только приходы участников пространства
             inc_q = inc_q.filter(Income.received_by_id.in_(iso_members))
         total_income_kgs = float(inc_q.scalar() or 0)
-    total_income_display = _maybe_convert_usd(total_income_kgs, display_currency, usd_rate)
+    total_income_display = _to_display(total_income_kgs, display_currency, disp_rate)
     result = total_income_display - total_expenses_display
 
     return {
@@ -863,8 +874,8 @@ def _build_category_report(
         "total_expenses": round(total_expenses_display, 2),
         "total_income": round(total_income_display, 2),
         "result": round(result, 2),
-        "currency": display_currency if (display_currency == "KGS" or usd_rate) else "KGS",
-        "rate": float(usd_rate) if usd_rate else None,
+        "currency": display_currency if (display_currency == "KGS" or disp_rate) else "KGS",
+        "rate": float(disp_rate) if disp_rate else None,
     }
 
 
@@ -881,7 +892,7 @@ def _build_employees_report(
     exclude_ws: bool = False, restrict_user_ids: Optional[set] = None,
 ) -> dict:
     rates = load_org_rates(db, org_id)
-    usd_rate = rates.get("USD")
+    disp_rate = rates.get(display_currency)
     if start is None or end is None:
         start, end = _month_range(year, month)
     topup_expr = to_kgs_expr(BalanceTopUp.amount, BalanceTopUp.currency, rates)
@@ -961,10 +972,10 @@ def _build_employees_report(
         # Пропускаем юзеров без движений и без накопительного остатка
         if received_kgs == 0 and transferred_kgs == 0 and spent_kgs == 0 and abs(balance_end_kgs) < 0.01:
             continue
-        received = _maybe_convert_usd(received_kgs, display_currency, usd_rate)
-        transferred = _maybe_convert_usd(transferred_kgs, display_currency, usd_rate)
-        spent = _maybe_convert_usd(spent_kgs, display_currency, usd_rate)
-        balance = _maybe_convert_usd(balance_end_kgs, display_currency, usd_rate)
+        received = _to_display(received_kgs, display_currency, disp_rate)
+        transferred = _to_display(transferred_kgs, display_currency, disp_rate)
+        spent = _to_display(spent_kgs, display_currency, disp_rate)
+        balance = _to_display(balance_end_kgs, display_currency, disp_rate)
         debt = -balance if balance < 0 else 0.0
         rows.append({
             "user_id": u.id,
@@ -984,8 +995,8 @@ def _build_employees_report(
         "date_from": start.date().isoformat(),
         "date_to": (end - timedelta(days=1)).date().isoformat(),
         "rows": rows,
-        "currency": display_currency if (display_currency == "KGS" or usd_rate) else "KGS",
-        "rate": float(usd_rate) if usd_rate else None,
+        "currency": display_currency if (display_currency == "KGS" or disp_rate) else "KGS",
+        "rate": float(disp_rate) if disp_rate else None,
     }
 
 
@@ -1000,7 +1011,7 @@ def _build_balance_report(
     exclude_ws: bool = False,
 ) -> dict:
     rates = load_org_rates(db, org_id)
-    usd_rate = rates.get("USD")
+    disp_rate = rates.get(display_currency)
     hidden = hidden_ids or set()
 
     def _kgs(amount, currency):
@@ -1165,12 +1176,12 @@ def _build_balance_report(
         # Конвертация для отображения
         d_ops = []
         for op in d["operations"]:
-            d_ops.append({**op, "amount_kgs": _maybe_convert_usd(op["amount_kgs"], display_currency, usd_rate)})
+            d_ops.append({**op, "amount_kgs": _to_display(op["amount_kgs"], display_currency, disp_rate)})
         days.append({
             "date": d["date"],
             "operations": d_ops,
-            "day_result": _maybe_convert_usd(day_result_kgs, display_currency, usd_rate),
-            "cumulative_balance": _maybe_convert_usd(running_kgs, display_currency, usd_rate),
+            "day_result": _to_display(day_result_kgs, display_currency, disp_rate),
+            "cumulative_balance": _to_display(running_kgs, display_currency, disp_rate),
         })
 
     period_income_kgs = sum(d["day_income_kgs"] for d in by_day.values())
@@ -1179,16 +1190,16 @@ def _build_balance_report(
     return {
         "from": date_from.date().isoformat(),
         "to": (date_to - timedelta(seconds=1)).date().isoformat(),
-        "opening_balance": _maybe_convert_usd(opening_balance_kgs, display_currency, usd_rate),
-        "closing_balance": _maybe_convert_usd(running_kgs, display_currency, usd_rate),
+        "opening_balance": _to_display(opening_balance_kgs, display_currency, disp_rate),
+        "closing_balance": _to_display(running_kgs, display_currency, disp_rate),
         "days": days,
         "period_total": {
-            "income": _maybe_convert_usd(period_income_kgs, display_currency, usd_rate),
-            "expenses": _maybe_convert_usd(period_expense_kgs, display_currency, usd_rate),
-            "result": _maybe_convert_usd(period_income_kgs - period_expense_kgs, display_currency, usd_rate),
+            "income": _to_display(period_income_kgs, display_currency, disp_rate),
+            "expenses": _to_display(period_expense_kgs, display_currency, disp_rate),
+            "result": _to_display(period_income_kgs - period_expense_kgs, display_currency, disp_rate),
         },
-        "currency": display_currency if (display_currency == "KGS" or usd_rate) else "KGS",
-        "rate": float(usd_rate) if usd_rate else None,
+        "currency": display_currency if (display_currency == "KGS" or disp_rate) else "KGS",
+        "rate": float(disp_rate) if disp_rate else None,
     }
 
 
@@ -1196,7 +1207,7 @@ def _build_balance_report(
 def category_report(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_reports_access),
@@ -1220,7 +1231,7 @@ def employees_report(
     month: Optional[int] = Query(default=None, ge=1, le=12),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
@@ -1259,7 +1270,7 @@ def _build_department_report(
     top_kgs = to_kgs_expr(BalanceTopUp.amount, BalanceTopUp.currency, rates)
 
     def disp(v: float) -> float:
-        return _maybe_convert_usd(float(v or 0), display_currency, usd)
+        return _to_display(float(v or 0), display_currency, usd)
 
     # База расходов — те же фильтры, что в отчёте по категориям (для схождения сумм).
     exp_base = (
@@ -1483,7 +1494,7 @@ def _restrict_department_report(data: dict, scope: Optional[set]) -> dict:
 def department_report(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     db: Session = Depends(get_db),
     me: User = Depends(require_reports_access),
 ):
@@ -1502,7 +1513,7 @@ def department_report(
 def department_report_export(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     db: Session = Depends(get_db),
     me: User = Depends(require_reports_access),
 ):
@@ -1516,7 +1527,7 @@ def department_report_export(
         only_employee_id=personal_report_user_id(db, me),
     )
     data = _restrict_department_report(data, auditor_department_ids(db, me))
-    sym = "$" if data["currency"] == "USD" else "с"
+    sym = _symbol(data["currency"])
     head_font = _Font(bold=True, color="FFFFFF")
     head_fill = _PatternFill("solid", fgColor="4F46E5")
     wb = _Workbook()
@@ -1571,7 +1582,7 @@ def department_report_export(
 def incomes_report(
     year: Optional[int] = Query(default=None, ge=2020, le=2100),
     month: Optional[int] = Query(default=None, ge=1, le=12),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     db: Session = Depends(get_db),
     me: User = Depends(require_director_level),
 ):
@@ -1579,7 +1590,7 @@ def incomes_report(
     Возвращает список Income с датами, источниками, описанием, получателем,
     суммами в родной валюте + KGS-эквиваленте по текущему курсу."""
     rates = load_org_rates(db, me.org_id)
-    usd_rate = rates.get("USD")
+    disp_rate = rates.get(currency)
     # Период: если year+month заданы — окно месяца; иначе все.
     start: Optional[datetime] = None
     end: Optional[datetime] = None
@@ -1614,7 +1625,7 @@ def incomes_report(
             "amount": float(i.amount),
             "currency": i.currency,
             "amount_kgs": kgs_value,
-            "amount_display": _maybe_convert_usd(kgs_value, currency, usd_rate),
+            "amount_display": _to_display(kgs_value, currency, disp_rate),
             "source": i.source,
             "source_id": i.source_id,
             "description": i.description,
@@ -1641,17 +1652,17 @@ def incomes_report(
 
     by_source_list = sorted(by_source.values(), key=lambda b: b["total_kgs"], reverse=True)
     for b in by_source_list:
-        b["total"] = _maybe_convert_usd(b.pop("total_kgs"), currency, usd_rate)
+        b["total"] = _to_display(b.pop("total_kgs"), currency, disp_rate)
 
     return {
         "year": year,
         "month": month,
         "items": items,
         "by_source": by_source_list,
-        "total": _maybe_convert_usd(total_kgs, currency, usd_rate),
+        "total": _to_display(total_kgs, currency, disp_rate),
         "count": len(items),
-        "currency": currency if (currency == "KGS" or usd_rate) else "KGS",
-        "rate": float(usd_rate) if usd_rate else None,
+        "currency": currency if (currency == "KGS" or disp_rate) else "KGS",
+        "rate": float(disp_rate) if disp_rate else None,
     }
 
 
@@ -1659,7 +1670,7 @@ def incomes_report(
 def balance_report(
     date_from: Optional[date] = Query(default=None, alias="from"),
     date_to: Optional[date] = Query(default=None, alias="to"),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     department_id: Optional[int] = None,
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
@@ -1693,7 +1704,7 @@ def balance_report(
 def category_report_xlsx(
     year: int = Query(..., ge=2020, le=2100),
     month: int = Query(..., ge=1, le=12),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     db: Session = Depends(get_db),
     me: User = Depends(require_reports_access),
 ):
@@ -1707,7 +1718,7 @@ def category_report_xlsx(
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
         only_employee_id=personal_report_user_id(db, me),
     )
-    sym = "$" if data["currency"] == "USD" else "с"
+    sym = _symbol(data["currency"])
 
     wb = _Workbook()
     ws = wb.active
@@ -1770,7 +1781,7 @@ def employees_report_xlsx(
     month: Optional[int] = Query(default=None, ge=1, le=12),
     date_from: Optional[date] = Query(default=None),
     date_to: Optional[date] = Query(default=None),
-    currency: str = Query(default="KGS", pattern="^(KGS|USD)$"),
+    currency: str = Query(default="KGS", pattern="^(KGS|USD|EUR|RUB)$"),
     db: Session = Depends(get_db),
     me: User = Depends(require_director_or_auditor),
 ):
@@ -1784,7 +1795,7 @@ def employees_report_xlsx(
         iso_ws=iso_ws, iso_members=iso_members, exclude_ws=exclude_ws,
         restrict_user_ids=auditor_visible_user_ids(db, me),
     )
-    sym = "$" if data["currency"] == "USD" else "с"
+    sym = _symbol(data["currency"])
     wb = _Workbook()
     ws = wb.active
     ws.title = "По сотрудникам"

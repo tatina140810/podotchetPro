@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, downloadFile } from "../api/client";
 import { useToast } from "../components/Toast";
-import { useDisplayCurrency } from "../context/CurrencyContext";
+import { useDisplayCurrency, currencySymbol } from "../context/CurrencyContext";
 import { isDirectorOrAuditor, useAuth } from "../context/AuthContext";
 
 const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
@@ -18,7 +18,7 @@ interface Dept {
 }
 interface Report {
   period: { month: number; year: number };
-  currency: "KGS" | "USD";
+  currency: string;  // валюта отображения, пришедшая с бэкенда
   departments: Dept[];
   totals: { received: number; spent: number; result: number };
   no_department: { spent: number; received: number; operations_count: number };
@@ -47,7 +47,7 @@ export default function ReportsDepartments() {
     loadReport();
   }, [year, month, display]);
 
-  const sym = data?.currency === "USD" ? "$" : "с";
+  const sym = currencySymbol(data?.currency);
   const fmt = (n: number) => n.toLocaleString("ru-RU");
 
   async function onExport() {

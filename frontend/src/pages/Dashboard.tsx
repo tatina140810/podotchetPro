@@ -8,7 +8,12 @@ import { getCurrentRate, getCurrentRates, refreshFromNbkr, setRate } from "../ap
 import { createIncome } from "../api/income";
 import { listIncomeSources, type IncomeSource } from "../api/incomeSources";
 import { listColleagues } from "../api/users";
-import { formatMoney, useDisplayCurrency } from "../context/CurrencyContext";
+import {
+  currencySymbol,
+  formatMoney,
+  useDisplayCurrency,
+  type DisplayCurrency,
+} from "../context/CurrencyContext";
 import { useSettings } from "../context/SettingsContext";
 
 interface CashBalance {
@@ -37,7 +42,9 @@ interface DirectorDash {
 export default function Dashboard() {
   const { user: _user } = useAuth();
   void _user;
-  const { display } = useDisplayCurrency();
+  // rate — курс ВЫБРАННОЙ валюты к сому (KGS → 1). cash_balance.rate с бэкенда
+  // остаётся USD-курсом, поэтому для сумм используем курс из контекста.
+  const { display, rate, rates } = useDisplayCurrency();
   const [data, setData] = useState<DirectorDash | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
@@ -67,19 +74,24 @@ export default function Dashboard() {
               color: cb.kgs < 0 ? "var(--danger)" : "var(--accent-light)",
               marginTop: 6,
             }}>
-              {formatMoney(cb.kgs, display, cb.rate)}
+              {formatMoney(cb.kgs, display, rate)}
             </div>
-            {/* Подписка во второй валюте — для контекста */}
-            {cb.rate !== null && (
+            {/* Подписка в других валютах — для контекста */}
+            {display !== "KGS" && rate ? (
               <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
-                {display === "USD"
-                  ? `≈ ${Math.round(cb.kgs).toLocaleString("ru-RU")} с (курс ${cb.rate})`
-                  : (cb.usd !== null && `≈ ${Math.round(cb.usd).toLocaleString("ru-RU")} $ (курс ${cb.rate})`)}
+                {`≈ ${Math.round(cb.kgs).toLocaleString("ru-RU")} с (курс ${rate})`}
+              </div>
+            ) : (
+              <div className="muted" style={{ fontSize: 13, marginTop: 2 }}>
+                {(["USD", "RUB"] as const)
+                  .filter((c) => rates[c])
+                  .map((c) => `≈ ${Math.round(cb.kgs / (rates[c] as number)).toLocaleString("ru-RU")} ${currencySymbol(c)}`)
+                  .join("   ")}
               </div>
             )}
-            {cb.rate === null && (
+            {display !== "KGS" && !rate && (
               <div className="muted" style={{ fontSize: 12, marginTop: 4, color: "var(--warning)" }}>
-                Курс USD/KGS не задан — показано только в сомах
+                Курс {display}/KGS не задан — показано только в сомах
               </div>
             )}
           </div>
@@ -89,9 +101,9 @@ export default function Dashboard() {
       </div>
 
       <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-        <Stat label="Выдано всего" value={t.issued} display={display} rate={cb.rate} />
-        <Stat label="Потрачено" value={t.spent} display={display} rate={cb.rate} />
-        <Stat label="Остаток" value={t.balance} display={display} rate={cb.rate} accent />
+        <Stat label="Выдано всего" value={t.issued} display={display} rate={rate} />
+        <Stat label="Потрачено" value={t.spent} display={display} rate={rate} />
+        <Stat label="Остаток" value={t.balance} display={display} rate={rate} accent />
         <div className="card">
           <div className="muted" style={{ fontSize: 12 }}>Расходы на проверке</div>
           <div style={{ fontSize: 28, fontWeight: 700, marginTop: 6 }}>
@@ -114,7 +126,7 @@ export default function Dashboard() {
         <Link to="/issued-topups" className="card" style={{ textDecoration: "none", color: "inherit" }}>
           <div className="muted" style={{ fontSize: 12 }}>Итого выдано мной</div>
           <div style={{ fontSize: 24, fontWeight: 700, marginTop: 6, color: "var(--accent-light)" }}>
-            {formatMoney(t.my_issued || 0, display, cb.rate)}
+            {formatMoney(t.my_issued || 0, display, rate)}
           </div>
           <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>история выдач →</div>
         </Link>
@@ -374,7 +386,7 @@ function Stat({
 }: {
   label: string;
   value: number;
-  display: "KGS" | "USD";
+  display: DisplayCurrency;
   rate: number | null;
   accent?: boolean;
 }) {

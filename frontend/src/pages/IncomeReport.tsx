@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api } from "../api/client";
-import { useDisplayCurrency } from "../context/CurrencyContext";
+import { useDisplayCurrency, currencySymbol, currencyLabel } from "../context/CurrencyContext";
 import { useSettings } from "../context/SettingsContext";
 import { ExpectedIncomes } from "./ExpectedIncomes";
 
@@ -33,7 +33,7 @@ interface Report {
   by_source: SourceRow[];
   total: number;
   count: number;
-  currency: "KGS" | "USD";
+  currency: string;  // валюта отображения, пришедшая с бэкенда
   rate: number | null;
 }
 
@@ -104,7 +104,7 @@ export default function IncomeReport() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [year, month, display]);
 
-  const sym = data?.currency === "USD" ? "$" : "с";
+  const sym = currencySymbol(data?.currency);
 
   function symFor(cur: string): string {
     return cur === "USD" ? "$" : cur === "RUB" ? "₽" : cur === "EUR" ? "€" : "с";
@@ -148,7 +148,7 @@ export default function IncomeReport() {
             <input type="number" value={year} onChange={(e) => setYear(Number(e.target.value))} style={{ width: 90 }} />
           </div>
           <div className="muted" style={{ fontSize: 12, marginLeft: 12 }}>
-            Валюта: <b>{display === "USD" ? "USD ($)" : "KGS (с)"}</b> — меняется тумблером в шапке.
+            Валюта: <b>{currencyLabel(display)}</b> — меняется тумблером в шапке.
           </div>
         </div>
       </div>

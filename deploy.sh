@@ -49,6 +49,7 @@ echo "==> 3/5 Rsync backend"
 rsync -avz --delete \
   --exclude '.venv' --exclude '__pycache__' --exclude '*.pyc' \
   --exclude 'uploads/' --exclude '*.db' --exclude '.env' \
+  --exclude '*service-account*.json' \
   backend/ "$REMOTE:$REMOTE_BASE/backend/"
 
 # Сверка структуры (memory: deploy_safety) — после rsync должны быть main.py, models.py, routers/

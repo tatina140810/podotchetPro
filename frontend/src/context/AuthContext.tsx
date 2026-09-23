@@ -20,6 +20,9 @@ export interface UserOut {
   /** Может массово импортировать СВОИ прошлые расходы («Импорт истории»). */
   can_bulk_import?: boolean;
   supervisor_id: number | null;
+  /** Жёсткая привязка: ВСЕ операции сотрудника уходят в это подразделение. */
+  forced_department_id?: number | null;
+  forced_department_name?: string | null;
   created_at: string;
   department_ids?: number[];
   // Владелец проектного пространства — включает режим изоляции интерфейса.

@@ -51,8 +51,10 @@ from services.permissions import (
     department_forbidden,
     dept_out_of_scope,
     hidden_user_ids,
+    forced_department_id,
     member_active_workspace_id,
     owner_isolation_ws_id,
+    resolve_department,
     visible_user_ids,
     visible_workspace_ids,
     workspace_department_ids,
@@ -337,6 +339,9 @@ def create_expense(
         dep_ids = [d.id for d in on_behalf.departments]
         if len(dep_ids) == 1:
             department_id = dep_ids[0]
+    # Жёсткая привязка сотрудника (users.forced_department_id) сильнее выбора в форме:
+    # владелец расхода важнее того, кто вносит (см. services/permissions.resolve_department).
+    department_id = resolve_department(on_behalf or me, me, department_id)
     if department_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
     dep = db.get(Department, department_id)
@@ -541,6 +546,27 @@ def _can_modify_expense(me: User, e: Expense) -> bool:
 def _apply_expense_fields(db: Session, e: Expense, data: dict, me: User) -> None:
     """Применить изменённые поля расхода + пересчёт amount_kgs + синхронизация
     депозита. Без проверки прав и статус-логики (их делает вызывающий)."""
+    # Смена сотрудника, на которого оформлен расход. Меняет балансы двух людей и
+    # принадлежность расхода проектному пространству, поэтому — только привилегированные
+    # роли; пространство пересчитывает СЕРВЕР по новому владельцу (клиенту не доверяем).
+    if data.get("employee_id") is not None and data["employee_id"] != e.employee_id:
+        if not is_director_or_auditor(me):
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN, "Менять сотрудника может только директор/админ/аудитор"
+            )
+        new_emp = db.get(User, data["employee_id"])
+        if not new_emp or new_emp.org_id != e.org_id or new_emp.id in hidden_user_ids(db, me):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "Сотрудник не найден")
+        e.workspace_id = member_active_workspace_id(db, new_emp.id, e.org_id)
+
+    # Жёсткая привязка владельца расхода перекрывает подразделение из формы (в т.ч.
+    # при смене сотрудника). Привязка правщика тут НЕ применяется — иначе админ,
+    # поправивший чужой расход, утащил бы его в своё подразделение.
+    owner = db.get(User, data.get("employee_id") or e.employee_id)
+    forced = forced_department_id(owner)
+    if forced is not None:
+        data["department_id"] = forced
+
     if data.get("department_id") is not None:
         dep = db.get(Department, data["department_id"])
         if department_forbidden(db, me, data["department_id"]):

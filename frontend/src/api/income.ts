@@ -59,6 +59,7 @@ export function updateIncome(
     source_id: number | null;
     description: string | null;
     received_by_id: number;
+    department_id: number | null;
     date: string;
   }>
 ): Promise<Income> {

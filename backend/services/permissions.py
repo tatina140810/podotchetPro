@@ -323,3 +323,31 @@ def personal_report_user_id(db: Session, me: User) -> Optional[int]:
     if is_director_or_auditor(me):
         return None
     return me.id
+
+
+# ===================== Жёсткая привязка сотрудника к подразделению =====================
+# users.forced_department_id: NULL = прежнее поведение (подразделение берём из формы).
+# NOT NULL = сотрудник «закреплён» за подразделением, и все его операции уходят туда
+# независимо от того, что прислал клиент (Адик → Мос офис, Алтынай → Локомотив).
+# Приоритет: привязка ВЛАДЕЛЬЦА записи (на кого оформлена операция) важнее привязки
+# того, кто её вносит — иначе расход сотрудника, введённый чужим админом, улетал бы
+# в чужое подразделение.
+
+
+def forced_department_id(owner: Optional[User], recorder: Optional[User] = None) -> Optional[int]:
+    """id подразделения, навязанного жёсткой привязкой, или None (привязки нет)."""
+    if owner is not None and owner.forced_department_id:
+        return owner.forced_department_id
+    if recorder is not None and recorder.forced_department_id:
+        return recorder.forced_department_id
+    return None
+
+
+def resolve_department(
+    owner: Optional[User],
+    recorder: Optional[User],
+    requested: Optional[int],
+) -> Optional[int]:
+    """Эффективное подразделение записи: привязка (если есть) или выбор пользователя."""
+    forced = forced_department_id(owner, recorder)
+    return forced if forced is not None else requested

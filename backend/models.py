@@ -184,6 +184,21 @@ class User(Base):
     supervisor_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    # Жёсткая привязка к подразделению. NULL = прежнее поведение (подразделение
+    # выбирается в форме). NOT NULL = ВСЕ операции, оформленные на этого сотрудника
+    # (расход/выдача/заявка), принудительно уходят в это подразделение; если он вносит
+    # запись от лица другого — привязка получателя важнее его собственной.
+    # Ставит директор/админ в карточке сотрудника.
+    # use_alter: users.forced_department_id → departments.id и departments.owner_id →
+    # users.id образуют цикл FK; без use_alter SQLAlchemy не может отсортировать
+    # таблицы для DDL (предупреждение «unresolvable cycles»).
+    forced_department_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey(
+            "departments.id", ondelete="RESTRICT",
+            use_alter=True, name="fk_users_forced_department_id",
+        ),
+        nullable=True, index=True,
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
     organization: Mapped[Organization] = relationship(back_populates="users")

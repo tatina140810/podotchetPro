@@ -4,7 +4,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from auth import (
     get_current_user,
@@ -74,6 +74,11 @@ def _dept_ids(user: User) -> list[int]:
 def _user_out(u: User) -> UserOut:
     out = UserOut.model_validate(u)
     out.department_ids = _dept_ids(u)
+    # Имя жёсткой привязки — чтобы форма расхода показывала подразделение текстом,
+    # не загружая справочник.
+    if u.forced_department_id:
+        dep = object_session(u).get(Department, u.forced_department_id) if object_session(u) else None
+        out.forced_department_name = dep.name if dep else None
     return out
 
 
@@ -685,6 +690,21 @@ def update_user(user_id: int, payload: UserUpdate, db: Session = Depends(get_db)
             status.HTTP_403_FORBIDDEN,
             "Менять роль superadmin может только superadmin",
         )
+    # Жёсткая привязка к подразделению — расширение учётной политики: ставит
+    # только superadmin/gen_director (обычный admin не перекраивает аналитику).
+    if "forced_department_id" in data:
+        if not is_director_level(admin) or admin.role == "admin":
+            raise HTTPException(
+                status.HTTP_403_FORBIDDEN,
+                "Менять жёсткую привязку к подразделению может только superadmin или gen_director",
+            )
+        forced = data["forced_department_id"] or None  # 0/None = снять привязку
+        if forced is not None:
+            dep = db.get(Department, forced)
+            if not dep or dep.org_id != admin.org_id:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+        data["forced_department_id"] = forced
+
     if "supervisor_id" in data and data["supervisor_id"] is not None:
         sup = db.get(User, data["supervisor_id"])
         if not sup or sup.org_id != admin.org_id:

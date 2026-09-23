@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { api, uploadReceipts } from "../api/client";
 import { useToast } from "./Toast";
 import { listDepartments, type Department } from "../api/departments";
+import { listColleagues } from "../api/users";
+import { useAuth, type UserOut } from "../context/AuthContext";
 
 interface Category { id: number; name: string }
 interface Receipt { id: number; file_url: string; file_name?: string | null }
@@ -14,6 +16,9 @@ interface Props {
     category_id: number | null;
     description: string | null;
     spent_at: string;
+    /** На кого оформлен расход. Есть не во всех списках — тогда селект сотрудника скрыт. */
+    employee_id?: number | null;
+    department_id?: number | null;
   };
   onClose: () => void;
   onSaved: () => void;
@@ -21,9 +26,21 @@ interface Props {
 
 export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   const toast = useToast();
+  const { user: me } = useAuth();
+  // Менять сотрудника, на которого оформлен расход, может только директор/админ/аудитор
+  // (бэкенд иначе вернёт 403) и только там, где список даёт employee_id.
+  const canEditEmployee =
+    expense.employee_id != null &&
+    ["superadmin", "admin", "gen_director", "auditor"].includes(me?.role || "");
   const [categories, setCategories] = useState<Category[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
-  const [departmentId, setDepartmentId] = useState("");
+  const [colleagues, setColleagues] = useState<UserOut[]>([]);
+  const [employeeId, setEmployeeId] = useState(
+    expense.employee_id != null ? String(expense.employee_id) : ""
+  );
+  const [departmentId, setDepartmentId] = useState(
+    expense.department_id != null ? String(expense.department_id) : ""
+  );
   const [form, setForm] = useState({
     amount: String(expense.amount),
     currency: (expense.currency || "KGS") as "KGS" | "USD" | "EUR" | "RUB",
@@ -42,8 +59,17 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   useEffect(() => {
     api<Category[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments(true).then(setDepartments).catch(() => {});
+    if (canEditEmployee) listColleagues().then(setColleagues).catch(() => {});
     loadReceipts();
   }, []);
+
+  // Жёсткая привязка выбранного сотрудника: подразделение у такого расхода не
+  // выбирается — сервер всё равно поставит закреплённое, поэтому показываем его текстом.
+  const selectedEmployee = colleagues.find((c) => String(c.id) === employeeId);
+  const forcedDeptId = selectedEmployee?.forced_department_id ?? null;
+  const forcedDeptName = forcedDeptId
+    ? (departments.find((d) => d.id === forcedDeptId)?.name || "закреплённое подразделение")
+    : null;
 
   async function onReceiptFile(e: React.ChangeEvent<HTMLInputElement>) {
     // Множественный выбор: грузим по очереди и прикрепляем все файлы разом.
@@ -93,6 +119,9 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
       };
       // department_id отправляем только если выбрали (иначе не трогаем текущее).
       if (departmentId) body.department_id = Number(departmentId);
+      if (canEditEmployee && employeeId && Number(employeeId) !== expense.employee_id) {
+        body.employee_id = Number(employeeId);
+      }
       await api(`/api/expenses/${expense.id}`, { method: "PATCH", body });
       toast.show("success", "Расход обновлён");
       onSaved();
@@ -135,12 +164,29 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
               {categories.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
             </select>
           </div>
+          {canEditEmployee && (
+            <div>
+              <label>Сотрудник</label>
+              <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+                {colleagues.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                Расход перейдёт на выбранного сотрудника — изменятся балансы обоих.
+              </div>
+            </div>
+          )}
           <div>
             <label>Подразделение</label>
-            <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
-              <option value="">— не менять —</option>
-              {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
-            </select>
+            {forcedDeptName ? (
+              <div className="muted" style={{ fontSize: 13, padding: "6px 0" }}>
+                {forcedDeptName} — закреплено за сотрудником, изменить нельзя
+              </div>
+            ) : (
+              <select value={departmentId} onChange={(e) => setDepartmentId(e.target.value)}>
+                <option value="">— не менять —</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            )}
           </div>
           <div>
             <label>Дата</label>

@@ -43,6 +43,7 @@ from services.permissions import (
     auditor_department_ids,
     department_forbidden,
     dept_out_of_scope,
+    forced_department_id,
     member_active_workspace_id,
     owner_isolation_ws_id,
     workspace_member_ids,
@@ -217,11 +218,13 @@ def create_request(
     _validate_approver(db, me, payload.approver_id)
     _validate_categories(db, me, payload.items)
 
-    # Подразделение — обязательно для новых заявок.
-    if payload.department_id is None:
+    # Подразделение — обязательно для новых заявок. Жёсткая привязка заявителя
+    # (users.forced_department_id) перекрывает выбор в форме.
+    department_id = forced_department_id(me) or payload.department_id
+    if department_id is None:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Укажите подразделение")
-    dep = db.get(Department, payload.department_id)
-    if not dep or dep.org_id != me.org_id or department_forbidden(db, me, payload.department_id):
+    dep = db.get(Department, department_id)
+    if not dep or dep.org_id != me.org_id or department_forbidden(db, me, department_id):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
     # Подотчётный может подать заявку по ЛЮБОМУ подразделению своей организации
     # (как и в форме расхода с all=true): не всегда привязан, но заявку создать должен.
@@ -246,7 +249,7 @@ def create_request(
         title=payload.title,
         total_amount=Decimal(0),
         currency=(payload.currency or "KGS").upper(),
-        department_id=payload.department_id,
+        department_id=department_id,
         is_expense_on_approve=payload.is_expense_on_approve,
         expense_category_id=payload.expense_category_id,
     )
@@ -491,11 +494,12 @@ def _apply_approve_edits(
         req.currency = payload.currency.upper()
     if payload.comment is not None:
         req.comment = payload.comment
-    if payload.department_id is not None:
-        dep = db.get(Department, payload.department_id)
-        if not dep or dep.org_id != me.org_id or department_forbidden(db, me, payload.department_id):
+    new_department_id = forced_department_id(req.requester) or payload.department_id
+    if new_department_id is not None and new_department_id != req.department_id:
+        dep = db.get(Department, new_department_id)
+        if not dep or dep.org_id != me.org_id or department_forbidden(db, me, new_department_id):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
-        req.department_id = payload.department_id
+        req.department_id = new_department_id
     if payload.is_expense_on_approve is not None:
         req.is_expense_on_approve = payload.is_expense_on_approve
     if payload.expense_category_id is not None:

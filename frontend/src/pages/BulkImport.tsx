@@ -1174,6 +1174,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             category_id: editing.category_id ?? null,
             description: editing.description ?? null,
             spent_at: editing.date,
+            employee_id: editing.employee_id ?? null,
+            department_id: editing.department_id ?? null,
           }}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); setBump((x) => x + 1); }}
@@ -1188,6 +1190,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             source: editing.source || "",
             description: editing.description ?? null,
             received_by_id: editing.received_by_id,
+            department_id: editing.department_id ?? null,
             date: editing.date,
           }}
           onClose={() => setEditing(null)}

@@ -89,6 +89,9 @@ class UserUpdate(BaseModel):
     can_view_own_reports: Optional[bool] = None
     can_create_departments: Optional[bool] = None
     can_bulk_import: Optional[bool] = None
+    # Жёсткая привязка к подразделению: все операции сотрудника уходят туда
+    # принудительно. 0 или отсутствие поля трактуются в роутере: 0 = снять привязку.
+    forced_department_id: Optional[int] = None
 
 
 class UserOut(BaseModel):
@@ -109,6 +112,10 @@ class UserOut(BaseModel):
     can_create_departments: bool = False
     can_bulk_import: bool = False
     supervisor_id: Optional[int] = None
+    # Жёсткая привязка к подразделению (None = нет): форма расхода показывает
+    # это подразделение как фиксированное.
+    forced_department_id: Optional[int] = None
+    forced_department_name: Optional[str] = None
     created_at: datetime
     # Подразделения сотрудника (id) — заполняется в роутере из M2M.
     department_ids: List[int] = Field(default_factory=list)
@@ -396,6 +403,10 @@ class ExpenseCreate(BaseModel):
 class ExpenseUpdate(BaseModel):
     category_id: Optional[int] = None
     department_id: Optional[int] = None
+    # Смена сотрудника, на которого оформлен расход (правка ошибочного ввода в
+    # «Импорте истории»). Доступна только директору/админу/аудитору: меняет балансы
+    # двух сотрудников, поэтому фиксируется в record_change_log.
+    employee_id: Optional[int] = None
     amount: Optional[Decimal] = Field(default=None, gt=0)
     currency: Optional[str] = Field(default=None, max_length=8)
     description: Optional[str] = None
@@ -991,6 +1002,8 @@ class IncomeUpdate(BaseModel):
     source_id: Optional[int] = None
     description: Optional[str] = None
     received_by_id: Optional[int] = None
+    # Подразделение прихода (в модели было всегда, в форме правки не хватало).
+    department_id: Optional[int] = None
     date: Optional[datetime] = None
 
 

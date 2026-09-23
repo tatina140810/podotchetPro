@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useToast } from "./Toast";
 import { listColleagues } from "../api/users";
 import { updateIncome } from "../api/income";
+import { listDepartments, type Department } from "../api/departments";
 import type { UserOut } from "../context/AuthContext";
 
 interface Props {
@@ -12,6 +13,7 @@ interface Props {
     source: string;
     description: string | null;
     received_by_id: number;
+    department_id?: number | null;
     date: string;
   };
   onClose: () => void;
@@ -21,17 +23,29 @@ interface Props {
 export function EditIncomeModal({ income, onClose, onSaved }: Props) {
   const toast = useToast();
   const [colleagues, setColleagues] = useState<UserOut[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
   const [form, setForm] = useState({
     amount: String(income.amount),
     currency: (income.currency || "KGS") as "KGS" | "USD" | "EUR" | "RUB",
     source: income.source || "",
     description: income.description || "",
     received_by_id: String(income.received_by_id),
+    department_id: income.department_id != null ? String(income.department_id) : "",
     date: income.date ? income.date.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => { listColleagues().then(setColleagues).catch(() => {}); }, []);
+  useEffect(() => {
+    listColleagues().then(setColleagues).catch(() => {});
+    listDepartments(true).then(setDepartments).catch(() => {});
+  }, []);
+
+  // Жёсткая привязка получателя: подразделение прихода задаёт сервер.
+  const receiver = colleagues.find((c) => String(c.id) === form.received_by_id);
+  const forcedDeptId = receiver?.forced_department_id ?? null;
+  const forcedDeptName = forcedDeptId
+    ? (departments.find((d) => d.id === forcedDeptId)?.name || "закреплённое подразделение")
+    : null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -45,6 +59,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
         source: form.source.trim() || undefined,
         description: form.description.trim() || null,
         received_by_id: Number(form.received_by_id),
+        department_id: form.department_id ? Number(form.department_id) : null,
         date: new Date(form.date).toISOString(),
       });
       toast.show("success", "Приход обновлён");
@@ -90,6 +105,19 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
             <select value={form.received_by_id} onChange={(e) => setForm({ ...form, received_by_id: e.target.value })} required>
               {colleagues.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
+          </div>
+          <div>
+            <label>Подразделение</label>
+            {forcedDeptName ? (
+              <div className="muted" style={{ fontSize: 13, padding: "6px 0" }}>
+                {forcedDeptName} — закреплено за сотрудником, изменить нельзя
+              </div>
+            ) : (
+              <select value={form.department_id} onChange={(e) => setForm({ ...form, department_id: e.target.value })}>
+                <option value="">— нет —</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            )}
           </div>
           <div>
             <label>Дата</label>

@@ -22,6 +22,8 @@ export function EditUserModal({
 }) {
   const { user: me } = useAuth();
   const canEditConfidential = isSuperadmin(me?.role);
+  // Жёсткую привязку ставит только superadmin/gen_director (бэкенд иначе вернёт 403).
+  const canEditForcedDept = isSuperadmin(me?.role) || me?.role === "gen_director";
   const [form, setForm] = useState({
     name: user.name as string,
     email: (user.email || "") as string,
@@ -35,6 +37,9 @@ export function EditUserModal({
   });
   const [departments, setDepartments] = useState<Department[]>([]);
   const [deptIds, setDeptIds] = useState<number[]>(user.department_ids || []);
+  const [forcedDeptId, setForcedDeptId] = useState<string>(
+    user.forced_department_id ? String(user.forced_department_id) : ""
+  );
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -65,6 +70,10 @@ export function EditUserModal({
         body.can_view_own_reports = form.can_view_own_reports;
         body.can_create_departments = form.can_create_departments;
         body.can_bulk_import = form.can_bulk_import;
+      }
+      if (canEditForcedDept) {
+        // 0 = снять привязку (бэкенд трактует 0/None как «нет привязки»).
+        body.forced_department_id = forcedDeptId ? Number(forcedDeptId) : 0;
       }
       if (form.password) body.password = form.password;
       await api(`/api/users/${user.id}`, { method: "PATCH", body });
@@ -153,6 +162,19 @@ export function EditUserModal({
               <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
                 Массовый ввод своих прошлых расходов таблицей. Только на себя и только расходы —
                 приходы и выдачи через импорт ему недоступны.
+              </div>
+            </div>
+          )}
+          {canEditForcedDept && departments.length > 0 && (
+            <div>
+              <label>Жёсткая привязка к подразделению</label>
+              <select value={forcedDeptId} onChange={(e) => setForcedDeptId(e.target.value)}>
+                <option value="">— нет (выбирается в форме) —</option>
+                {departments.map((d) => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+              <div className="muted" style={{ fontSize: 12, marginTop: 4 }}>
+                Все операции сотрудника (расходы, выдачи, заявки) будут уходить в это
+                подразделение независимо от выбора в форме. Пустое значение — как раньше.
               </div>
             </div>
           )}

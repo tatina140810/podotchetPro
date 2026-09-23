@@ -16,11 +16,16 @@ from auth import (
     require_director_or_auditor,
 )
 from database import get_db
-from models import Income, IncomeSource, User
+from models import Department, Income, IncomeSource, User
 from schemas import IncomeCreate, IncomeOut, IncomeUpdate
 from services.audit import log_delete, log_update, snapshot
 from services.exchange import get_current_rate
-from services.permissions import auditor_department_ids, hidden_user_ids
+from services.permissions import (
+    auditor_department_ids,
+    department_forbidden,
+    forced_department_id,
+    hidden_user_ids,
+)
 from services.soft_delete import soft_delete
 
 
@@ -228,6 +233,21 @@ def update_income(
     if "source" in data and data["source"] is not None and "source_id" not in data:
         inc.source = data["source"]
         inc.source_id = None
+
+    # Подразделение прихода: правится только привилегированными ролями; жёсткая
+    # привязка получателя (users.forced_department_id) перекрывает выбор в форме.
+    if "department_id" in data and not is_director_or_auditor(me):
+        data.pop("department_id")
+    forced = forced_department_id(db.get(User, inc.received_by_id))
+    if forced is not None and is_director_or_auditor(me):
+        data["department_id"] = forced
+    if "department_id" in data:
+        if data["department_id"] is not None:
+            dep = db.get(Department, data["department_id"])
+            if (not dep or dep.org_id != me.org_id
+                    or department_forbidden(db, me, data["department_id"])):
+                raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
+        inc.department_id = data["department_id"]
 
     for f in ("description", "date"):
         if f in data:

@@ -78,6 +78,15 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
     // можно в его профиле («Сотрудники» → «Изменить»).
     listDepartments(true).then((ds) => {
       setDepartments(ds);
+      // Жёсткая привязка сотрудника — подразделение не выбирается (сервер всё равно
+      // поставит закреплённое), сразу подставляем его и его валюту.
+      const forced = me.forced_department_id
+        ? ds.find((d) => d.id === me.forced_department_id)
+        : undefined;
+      if (forced) {
+        setForm((s) => ({ ...s, department_id: String(forced.id), currency: forced.currency || s.currency }));
+        return;
+      }
       // Если подразделение одно — подставляем автоматически (типичный случай).
       if (ds.length === 1) setForm((s) => ({ ...s, department_id: String(ds[0].id), currency: ds[0].currency || s.currency }));
     }).catch(() => {});
@@ -355,6 +364,7 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
             <label>Подразделение</label>
             <select
               value={form.department_id}
+              disabled={!!me?.forced_department_id}
               onChange={(e) => {
                 // Валюта подразделения (напр. Мос офис = RUB) подставляется по умолчанию.
                 const dep = departments.find((d) => String(d.id) === e.target.value);
@@ -367,6 +377,11 @@ export function NewExpenseForm({ onSaved, onCancel, compact }: Props) {
                 <option key={d.id} value={d.id}>{d.name}</option>
               ))}
             </select>
+            {!!me?.forced_department_id && (
+              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                Подразделение закреплено за вами — все расходы уходят в него.
+              </div>
+            )}
           </div>
         )}
         {kind === "transfer" ? (

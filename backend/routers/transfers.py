@@ -29,7 +29,9 @@ from services.exchange import get_current_rate
 from services.soft_delete import soft_delete
 from services.permissions import (
     department_forbidden,
+    forced_department_id,
     member_active_workspace_id,
+    resolve_department,
     owner_isolation_ws_id,
     workspace_member_ids,
 )
@@ -368,10 +370,13 @@ def topup_user(
     if not target or target.org_id != admin.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Пользователь не найден")
 
-    if payload.department_id is not None:
-        dep = db.get(Department, payload.department_id)
+    # Жёсткая привязка: подразделение получателя выдачи (а если у него привязки нет —
+    # того, кто вносит) перекрывает выбор в форме.
+    department_id = resolve_department(target, admin, payload.department_id)
+    if department_id is not None:
+        dep = db.get(Department, department_id)
         if (not dep or dep.org_id != admin.org_id
-                or department_forbidden(db, admin, payload.department_id)):
+                or department_forbidden(db, admin, department_id)):
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Подразделение не найдено")
 
     # «Кто выдал»: по умолчанию текущий пользователь; для «передал дальше» из профиля
@@ -408,7 +413,7 @@ def topup_user(
         note=payload.note,
         date=payload.date or _dt.utcnow(),
         category_id=payload.category_id,
-        department_id=payload.department_id,
+        department_id=department_id,
         # Привязка к активному пространству получателя — как у выдач (create_advance).
         # Так выдача с категорией и авто-расход попадают в пространство участника.
         # В основном пространстве получатель не участник → None (поведение не меняется).
@@ -490,6 +495,9 @@ def update_topup(
         if not issuer or issuer.org_id != admin.org_id:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "Выдающий не найден")
         t.admin_id = data["admin_id"]
+    forced = forced_department_id(db.get(User, t.user_id))
+    if forced is not None:
+        data["department_id"] = forced  # привязка получателя сильнее формы
     if "department_id" in data and data["department_id"] is not None:
         dep = db.get(Department, data["department_id"])
         if (not dep or dep.org_id != admin.org_id

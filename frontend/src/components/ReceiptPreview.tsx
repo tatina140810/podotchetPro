@@ -33,7 +33,7 @@ function ReceiptModal({ url, onClose }: { url: string; onClose: () => void }) {
 
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 100,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.85)", zIndex: 2200,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <button onClick={onClose} className="ghost" style={{

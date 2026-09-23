@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useToast } from "./Toast";
 import { listColleagues } from "../api/users";
 import { updateTransfer, type MoneyTransfer } from "../api/transfers";
@@ -50,9 +51,11 @@ export function EditTransferModal({ transfer, onClose, onSaved }: Props) {
     }
   }
 
-  return (
+  // Портал в body: иначе окно живёт в стекинг-контексте страницы
+  // (панель импорта, шапка) и прячется под ними.
+  return createPortal(
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <form className="card" onClick={(e) => e.stopPropagation()} onSubmit={submit}
@@ -86,6 +89,7 @@ export function EditTransferModal({ transfer, onClose, onSaved }: Props) {
           <button type="submit" disabled={busy}>{busy ? "Сохраняю…" : "Сохранить изменения"}</button>
         </div>
       </form>
-    </div>
+    </div>,
+    document.body,
   );
 }

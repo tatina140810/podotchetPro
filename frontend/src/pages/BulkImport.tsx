@@ -545,7 +545,7 @@ export default function BulkImport() {
       {/* Превью-подтверждение */}
       {showConfirm && (
         <div onClick={() => setShowConfirm(false)} style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
         }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: "100%" }}>
@@ -681,7 +681,7 @@ function DuplicatesButton() {
       </button>
       {open && (
         <div onClick={() => setOpen(false)} style={{
-          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+          position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
         }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 900, width: "100%", maxHeight: "85vh", overflow: "auto" }}>
@@ -1223,6 +1223,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
             description: editing.description ?? null,
             spent_at: editing.date,
             employee_id: editing.employee_id ?? null,
+            employee_name: editing.who ?? null,
             department_id: editing.department_id ?? null,
             payment_method: editing.payment_method ?? null,
           }}

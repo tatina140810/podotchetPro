@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { useToast } from "./Toast";
 import { listColleagues } from "../api/users";
 import { updateIncome } from "../api/income";
@@ -72,9 +73,11 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
     } finally { setBusy(false); }
   }
 
-  return (
+  // Портал в body: иначе окно живёт в стекинг-контексте страницы
+  // (панель импорта, шапка) и прячется под ними.
+  return createPortal(
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "flex-start", justifyContent: "center",
       padding: "5vh 16px", overflowY: "auto",
     }}>
@@ -144,6 +147,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

@@ -7,6 +7,7 @@
  * открывающую эту модалку, показывать только им.
  */
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../api/client";
 import { useAuth, isSuperadmin, type Role } from "../context/AuthContext";
 import { listDepartments, type Department } from "../api/departments";
@@ -82,9 +83,11 @@ export function EditUserModal({
     finally { setBusy(false); }
   }
 
-  return (
+  // Портал в body: иначе окно живёт в стекинг-контексте страницы
+  // (панель импорта, шапка) и прячется под ними.
+  return createPortal(
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
@@ -207,6 +210,7 @@ export function EditUserModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

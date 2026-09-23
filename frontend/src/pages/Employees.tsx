@@ -249,7 +249,7 @@ function TopUpModal({
 
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400, width: "100%" }}>
@@ -401,7 +401,7 @@ function AddEmployeeModal({
 
   return (
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>

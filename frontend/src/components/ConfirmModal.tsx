@@ -27,7 +27,7 @@ export function ConfirmModal({ title, rows, message, confirmLabel = "Удали�
 
   return (
     <div onClick={() => !busy && onCancel()} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 70,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 2100,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%" }}>

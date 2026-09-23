@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { api, uploadReceipts } from "../api/client";
 import { useToast } from "./Toast";
 import { listDepartments, type Department } from "../api/departments";
@@ -17,6 +18,7 @@ interface Props {
     description: string | null;
     spent_at: string;
     payment_method?: "cash" | "bank" | null;
+    employee_name?: string | null;
     /** На кого оформлен расход. Есть не во всех списках — тогда селект сотрудника скрыт. */
     employee_id?: number | null;
     department_id?: number | null;
@@ -133,9 +135,11 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     } finally { setBusy(false); }
   }
 
-  return (
+  // Портал в body: иначе окно живёт в стекинг-контексте страницы
+  // (панель импорта, шапка) и прячется под ними.
+  return createPortal(
     <div onClick={onClose} style={{
-      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 50,
+      position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "flex-start", justifyContent: "center",
       padding: "5vh 16px", overflowY: "auto",
     }}>
@@ -171,6 +175,14 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
             <div>
               <label>Сотрудник</label>
               <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
+                {/* Пока список коллег не загрузился (или сотрудника в нём нет —
+                    например, он деактивирован), держим текущего: иначе select
+                    показал бы первого в списке и расход уехал бы не на того. */}
+                {!colleagues.some((u) => String(u.id) === employeeId) && (
+                  <option value={employeeId}>
+                    {expense.employee_name || "текущий сотрудник"}
+                  </option>
+                )}
                 {colleagues.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
               <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
@@ -232,6 +244,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

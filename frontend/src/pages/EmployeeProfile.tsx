@@ -69,7 +69,7 @@ export default function EmployeeProfile() {
 
   useEffect(() => {
     if (!canEdit) return;
-    listColleagues().then(setColleagues).catch(() => {});
+    listColleagues(true).then(setColleagues).catch(() => {});
     api<CatOpt[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments().then(setDepartments).catch(() => {});
   }, [canEdit]);

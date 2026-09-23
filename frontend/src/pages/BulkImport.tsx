@@ -109,7 +109,7 @@ export default function BulkImport() {
   const [result, setResult] = useState<ImportResult | null>(null);
 
   useEffect(() => {
-    listColleagues().then(setColleagues).catch(() => {});
+    listColleagues(true).then(setColleagues).catch(() => {});
     api<CategoryOpt[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments().then(setDepartments).catch(() => {});
     if (useSourceDirectory) {

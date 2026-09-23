@@ -473,6 +473,25 @@ def _recent_operations_rows(
 
     total = (eq.count() if show_expense else 0) + (iq.count() if include_income else 0) + (tq.count() if show_topup else 0) + (rq.count() if include_requests else 0)
 
+    # Точный итог по ВСЕМУ фильтру (не по странице) — по каждой валюте отдельно:
+    # складывать разные валюты нельзя. Считаем в БД, чтобы не зависеть от пагинации.
+    totals: dict[str, Decimal] = {}
+
+    def _add_totals(query, amount_col, currency_col) -> None:
+        for cur, amt in query.with_entities(
+            currency_col, func.coalesce(func.sum(amount_col), 0)
+        ).group_by(currency_col).all():
+            totals[cur or "KGS"] = totals.get(cur or "KGS", Decimal("0")) + Decimal(str(amt or 0))
+
+    if show_expense:
+        _add_totals(eq, Expense.amount, Expense.currency)
+    if include_income:
+        _add_totals(iq, Income.amount, Income.currency)
+    if show_topup:
+        _add_totals(tq, BalanceTopUp.amount, BalanceTopUp.currency)
+    if include_requests:
+        _add_totals(rq, MoneyRequest.total_amount, MoneyRequest.currency)
+
     # Берём из каждого типа по (offset + limit) последних — этого хватит чтобы
     # после слияния и сортировки корректно вернуть срез [offset : offset+limit].
     take = offset + limit
@@ -556,7 +575,7 @@ def _recent_operations_rows(
 
     # Сортируем по date desc, затем по kind+id для устойчивого порядка
     rows.sort(key=lambda r: (r["date"], r["kind"], r["id"]), reverse=True)
-    return rows[offset : offset + limit], total
+    return rows[offset : offset + limit], total, {k: float(v) for k, v in totals.items()}
 
 
 @router.get("/recent-operations")
@@ -578,7 +597,7 @@ def recent_operations(
     """Последние N операций org с пагинацией и фильтрами. Возвращает {items, total, has_more}."""
     limit = max(1, min(limit, 200))
     offset = max(0, offset)
-    page, total = _recent_operations_rows(
+    page, total, totals = _recent_operations_rows(
         db, admin,
         limit=limit,
         offset=offset,
@@ -595,6 +614,8 @@ def recent_operations(
     return {
         "items": page,
         "total": total,
+        # Итог по всему фильтру, по валютам: {"RUB": 1234.5, "KGS": 100.0}
+        "totals": totals,
         "has_more": (offset + limit) < total,
     }
 
@@ -641,7 +662,7 @@ def recent_operations_export(
     """Excel-выгрузка «Последних операций» по ТЕМ ЖЕ фильтрам, что и на экране,
     но по всем страницам сразу (до RECENT_OPS_EXPORT_MAX_ROWS строк)."""
     ensure_can_export(db, admin)
-    rows, total = _recent_operations_rows(
+    rows, total, _totals = _recent_operations_rows(
         db, admin,
         limit=RECENT_OPS_EXPORT_MAX_ROWS,
         offset=0,

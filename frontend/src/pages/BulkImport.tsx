@@ -10,6 +10,7 @@ import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
 import { api, downloadFile, uploadReceipt } from "../api/client";
 import { useToast } from "../components/Toast";
+import { CURRENCY_SYMBOLS } from "../context/CurrencyContext";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { useAuth, type UserOut } from "../context/AuthContext";
 import { useSettings } from "../context/SettingsContext";
@@ -742,6 +743,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
   const PAGE_SIZE = 30;
   const [ops, setOps] = useState<RecentOp[] | null>(null);
   const [total, setTotal] = useState(0);
+  // Точный итог по ВСЕМУ фильтру (не по странице), по валютам: {"RUB": 1234.5}.
+  const [totals, setTotals] = useState<Record<string, number>>({});
   const [err, setErr] = useState<string | null>(null);
   const [bump, setBump] = useState(0);
   const [editing, setEditing] = useState<RecentOp | null>(null);
@@ -850,10 +853,10 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
 
       setOps(null);
       setErr(null);
-      api<{ items: RecentOp[]; total: number; has_more: boolean }>(
+      api<{ items: RecentOp[]; total: number; totals?: Record<string, number>; has_more: boolean }>(
         `/api/admin/recent-operations?${qs.toString()}`
       )
-        .then((r) => { setOps(r.items); setTotal(r.total); })
+        .then((r) => { setOps(r.items); setTotal(r.total); setTotals(r.totals || {}); })
         .catch((e) => setErr(e.message));
     }, 250);
     return () => clearTimeout(t);
@@ -953,6 +956,15 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
           <span className="muted" style={{ fontSize: 12 }}>
             {ops ? `Стр ${page + 1} из ${totalPages} · всего ${total}` : "загрузка…"}
           </span>
+          {Object.keys(totals).length > 0 && (
+            <span style={{ fontSize: 13, fontWeight: 600 }} title="Итог по текущему фильтру, по всем страницам">
+              Итого:{" "}
+              {Object.entries(totals)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .map(([cur, sum]) => `${sum.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ${CURRENCY_SYMBOLS[cur] || cur}`)
+                .join(" · ")}
+            </span>
+          )}
           <button
             type="button"
             className="success"

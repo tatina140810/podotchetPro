@@ -191,3 +191,36 @@ def test_amount_written_like_neighbours():
     assert format_amount_like("25 000,00 ₽", Decimal("1000")) == "1 000,00 ₽"
     assert format_amount_like(5000, Decimal("1000")) == 1000.0
     assert format_amount_like(None, Decimal("1000")) == 1000.0
+
+
+# ----------------------- итоги «наличные / безнал» -----------------------
+
+def test_recent_operations_totals_split_by_payment_method(client, sync_on):
+    """Шапка «Последних операций» показывает итог и его разбивку по форме расчёта."""
+    ids = _fresh_seed()
+    sync_on(ids.depA)
+    _post_expense(client, ids, amount="1000", payment_method="bank")
+    _post_expense(client, ids, amount="250", payment_method="cash")
+    _post_expense(client, ids, amount="40", description="без формы", payment_method=None)
+
+    r = client.get("/api/admin/recent-operations?limit=50&kind=expense", headers=_hdr(ids))
+    assert r.status_code == 200, r.text
+    body = r.json()
+    by_method = body["totals_by_method"]
+    assert by_method["bank"]["RUB"] == 1000.0
+    assert by_method["cash"]["RUB"] == 250.0
+    assert by_method["unset"]["RUB"] == 40.0
+    # Общий итог = сумма разбивки (иначе цифры в шапке разошлись бы)
+    assert body["totals"]["RUB"] == 1290.0
+
+
+def test_recent_operations_filter_by_payment_method(client, sync_on):
+    ids = _fresh_seed()
+    sync_on(ids.depA)
+    _post_expense(client, ids, amount="1000", payment_method="bank")
+    _post_expense(client, ids, amount="250", payment_method="cash")
+
+    r = client.get("/api/admin/recent-operations?limit=50&payment_method=cash", headers=_hdr(ids))
+    body = r.json()
+    assert body["total"] == 1
+    assert body["totals"]["RUB"] == 250.0

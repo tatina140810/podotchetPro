@@ -476,20 +476,32 @@ def _recent_operations_rows(
     # Точный итог по ВСЕМУ фильтру (не по странице) — по каждой валюте отдельно:
     # складывать разные валюты нельзя. Считаем в БД, чтобы не зависеть от пагинации.
     totals: dict[str, Decimal] = {}
+    # Та же сумма, но с разбивкой по форме расчёта: {"cash": {"RUB": ...}, "bank": {...},
+    # "unset": {...}} — «наличные / безнал / не указано» в шапке списка.
+    by_method: dict[str, dict[str, Decimal]] = {}
 
-    def _add_totals(query, amount_col, currency_col) -> None:
-        for cur, amt in query.with_entities(
-            currency_col, func.coalesce(func.sum(amount_col), 0)
-        ).group_by(currency_col).all():
-            totals[cur or "KGS"] = totals.get(cur or "KGS", Decimal("0")) + Decimal(str(amt or 0))
+    def _add_totals(query, amount_col, currency_col, method_col=None) -> None:
+        cols = [currency_col] + ([method_col] if method_col is not None else [])
+        rows_agg = query.with_entities(
+            *cols, func.coalesce(func.sum(amount_col), 0)
+        ).group_by(*cols).all()
+        for row in rows_agg:
+            cur = row[0] or "KGS"
+            amt = Decimal(str(row[-1] or 0))
+            totals[cur] = totals.get(cur, Decimal("0")) + amt
+            if method_col is not None:
+                key = row[1] or "unset"
+                by_method.setdefault(key, {})
+                by_method[key][cur] = by_method[key].get(cur, Decimal("0")) + amt
 
     if show_expense:
-        _add_totals(eq, Expense.amount, Expense.currency)
+        _add_totals(eq, Expense.amount, Expense.currency, Expense.payment_method)
     if include_income:
-        _add_totals(iq, Income.amount, Income.currency)
+        _add_totals(iq, Income.amount, Income.currency, Income.payment_method)
     if show_topup:
-        _add_totals(tq, BalanceTopUp.amount, BalanceTopUp.currency)
+        _add_totals(tq, BalanceTopUp.amount, BalanceTopUp.currency, BalanceTopUp.payment_method)
     if include_requests:
+        # У заявки формы расчёта нет — в разбивку она не попадает, только в общий итог.
         _add_totals(rq, MoneyRequest.total_amount, MoneyRequest.currency)
 
     # Берём из каждого типа по (offset + limit) последних — этого хватит чтобы
@@ -575,7 +587,17 @@ def _recent_operations_rows(
 
     # Сортируем по date desc, затем по kind+id для устойчивого порядка
     rows.sort(key=lambda r: (r["date"], r["kind"], r["id"]), reverse=True)
-    return rows[offset : offset + limit], total, {k: float(v) for k, v in totals.items()}
+    return (
+        rows[offset : offset + limit],
+        total,
+        {
+            "by_currency": {k: float(v) for k, v in totals.items()},
+            "by_method": {
+                m: {c: float(v) for c, v in cur_map.items()}
+                for m, cur_map in by_method.items()
+            },
+        },
+    )
 
 
 @router.get("/recent-operations")
@@ -615,7 +637,9 @@ def recent_operations(
         "items": page,
         "total": total,
         # Итог по всему фильтру, по валютам: {"RUB": 1234.5, "KGS": 100.0}
-        "totals": totals,
+        "totals": totals["by_currency"],
+        # Он же с разбивкой «наличные / безнал / не указано»
+        "totals_by_method": totals["by_method"],
         "has_more": (offset + limit) < total,
     }
 

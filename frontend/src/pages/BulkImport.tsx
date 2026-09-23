@@ -628,6 +628,15 @@ interface RecentOp {
   receipts?: { id: number | null; url: string; name: string | null }[];
 }
 
+/** «1 000 € · 53 754 789,77 ₽» — суммы по валютам через точку. */
+function formatTotals(map: Record<string, number>): string {
+  return Object.entries(map)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([cur, sum]) =>
+      `${sum.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ${CURRENCY_SYMBOLS[cur] || cur}`)
+    .join(" · ");
+}
+
 interface DuplicatePair {
   topup: {
     id: number; date: string; issued_by: string | null; receiver: string | null;
@@ -745,6 +754,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
   const [total, setTotal] = useState(0);
   // Точный итог по ВСЕМУ фильтру (не по странице), по валютам: {"RUB": 1234.5}.
   const [totals, setTotals] = useState<Record<string, number>>({});
+  // Тот же итог с разбивкой: {"cash": {"RUB": …}, "bank": {…}, "unset": {…}}
+  const [totalsByMethod, setTotalsByMethod] = useState<Record<string, Record<string, number>>>({});
   const [err, setErr] = useState<string | null>(null);
   const [bump, setBump] = useState(0);
   const [editing, setEditing] = useState<RecentOp | null>(null);
@@ -853,10 +864,21 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
 
       setOps(null);
       setErr(null);
-      api<{ items: RecentOp[]; total: number; totals?: Record<string, number>; has_more: boolean }>(
+      api<{
+        items: RecentOp[];
+        total: number;
+        totals?: Record<string, number>;
+        totals_by_method?: Record<string, Record<string, number>>;
+        has_more: boolean;
+      }>(
         `/api/admin/recent-operations?${qs.toString()}`
       )
-        .then((r) => { setOps(r.items); setTotal(r.total); setTotals(r.totals || {}); })
+        .then((r) => {
+          setOps(r.items);
+          setTotal(r.total);
+          setTotals(r.totals || {});
+          setTotalsByMethod(r.totals_by_method || {});
+        })
         .catch((e) => setErr(e.message));
     }, 250);
     return () => clearTimeout(t);
@@ -958,11 +980,16 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
           </span>
           {Object.keys(totals).length > 0 && (
             <span style={{ fontSize: 13, fontWeight: 600 }} title="Итог по текущему фильтру, по всем страницам">
-              Итого:{" "}
-              {Object.entries(totals)
-                .sort(([a], [b]) => a.localeCompare(b))
-                .map(([cur, sum]) => `${sum.toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ${CURRENCY_SYMBOLS[cur] || cur}`)
-                .join(" · ")}
+              Итого: {formatTotals(totals)}
+            </span>
+          )}
+          {/* Разбивка «наличные / безнал» — только если форма расчёта где-то проставлена. */}
+          {(totalsByMethod.cash || totalsByMethod.bank) && (
+            <span className="muted" style={{ fontSize: 12 }}>
+              {totalsByMethod.cash && `наличные: ${formatTotals(totalsByMethod.cash)}`}
+              {totalsByMethod.cash && totalsByMethod.bank && "  ·  "}
+              {totalsByMethod.bank && `безнал: ${formatTotals(totalsByMethod.bank)}`}
+              {totalsByMethod.unset && `  ·  без формы расчёта: ${formatTotals(totalsByMethod.unset)}`}
             </span>
           )}
           <button
@@ -1085,6 +1112,7 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
                 <th style={{ width: 100 }}>Тип</th>
                 <th>Кто / Кому</th>
                 <th style={{ textAlign: "right" }}>Сумма</th>
+                <th style={{ width: 90 }}>Расчёт</th>
                 <th>Категория / Источник</th>
                 <th>Комментарий</th>
                 <th style={{ width: 80 }}></th>
@@ -1117,13 +1145,13 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
                   <td style={{ textAlign: "right", fontWeight: 600 }}>
                     {o.amount.toLocaleString("ru-RU")} {o.currency}
                   </td>
+                  <td style={{ fontSize: 12 }}>
+                    {o.payment_method
+                      ? (o.payment_method === "cash" ? "наличные" : "безнал")
+                      : <span className="muted">—</span>}
+                  </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {o.category_name || o.source || "—"}
-                    {o.payment_method && (
-                      <div style={{ fontSize: 11, opacity: 0.75 }}>
-                        {o.payment_method === "cash" ? "наличные" : "безнал"}
-                      </div>
-                    )}
                   </td>
                   <td className="muted" style={{ fontSize: 12 }}>
                     {o.description || o.note || ""}

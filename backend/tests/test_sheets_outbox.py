@@ -171,3 +171,23 @@ def test_sync_disabled_keeps_queue_empty(client):
     ids = _fresh_seed()
     _post_expense(client, ids)
     assert _queue() == []
+
+
+# ----------------------------- формат суммы под лист -----------------------------
+
+def test_format_amount_text_matches_bank_sheet():
+    from services.sheets_sync import format_amount_text
+    assert format_amount_text(Decimal("1155000")) == "1 155 000,00 ₽"
+    assert format_amount_text(Decimal("25000.5")) == "25 000,50 ₽"
+    assert format_amount_text(Decimal("4.31")) == "4,31 ₽"
+
+
+def test_amount_written_like_neighbours():
+    """На «Банке» суммы — текст («25 000,00 ₽»), на «Нале» — числа.
+
+    Это не косметика: формула итога «Банка» построена на REGEXREPLACE и числовую
+    ячейку пропускает (итог не сходился), поэтому формат берётся с соседней строки."""
+    from services.sheets_sync import format_amount_like
+    assert format_amount_like("25 000,00 ₽", Decimal("1000")) == "1 000,00 ₽"
+    assert format_amount_like(5000, Decimal("1000")) == 1000.0
+    assert format_amount_like(None, Decimal("1000")) == 1000.0

@@ -240,20 +240,57 @@ def format_date(dt: datetime) -> str:
     return dt.strftime("%d.%m.%Y")
 
 
-def build_row_values(entry: SheetsOutbox, *, person: Optional[str] = None) -> list:
-    """Значения строки в том же виде, как уже записаны в листе.
+def format_amount_text(amount: Decimal) -> str:
+    """«1 155 000,00 ₽» — как записаны суммы на листе «Банк»."""
+    whole, frac = f"{Decimal(str(amount)):.2f}".split(".")
+    groups = []
+    while len(whole) > 3:
+        groups.insert(0, whole[-3:])
+        whole = whole[:-3]
+    groups.insert(0, whole)
+    return f"{' '.join(groups)},{frac} ₽"
 
-    Сумма пишется числом (не текстом) — формат ячейки наследуется от строки выше
-    (insertDimension с inheritFromBefore), а формула ИТОГО одинаково считает и то и то."""
-    amount = float(Decimal(str(entry.amount)))
+
+def format_amount_like(sample, amount: Decimal):
+    """Сумма в том же виде, что и в соседних строках листа.
+
+    Это не косметика: на листе «Банк» суммы записаны ТЕКСТОМ («25 000,00 ₽»), и
+    формула итога там построена на REGEXREPLACE — числовую ячейку она пропускает
+    (REGEXREPLACE от числа = ошибка → IFERROR → 0), и итог не сходится. На листе
+    «Нал» суммы записаны числами. Поэтому формат берём с образца."""
+    if isinstance(sample, str) and sample.strip():
+        return format_amount_text(amount)
+    return float(Decimal(str(amount)))
+
+
+def build_row_values(entry: SheetsOutbox, *, person: Optional[str] = None, sample=None) -> list:
+    """Значения строки в том же виде, как уже записаны в листе."""
+    amount = format_amount_like(sample, Decimal(str(entry.amount)))
     if entry.sheet == "salary":
         return [person or entry.title, entry.title, format_date(entry.op_date), amount]
     return [format_date(entry.op_date), entry.title, amount]
 
 
-def append_entry(client: SheetsClient, entry: SheetsOutbox, *, person: Optional[str] = None) -> int:
+def _total_value(client: SheetsClient, title: str, col: str, row: int) -> Optional[float]:
+    """Числовое значение ячейки итога (None — не число)."""
+    vals = client.get_values(f"{title}!{col}{row}:{col}{row}", render="UNFORMATTED_VALUE")
+    if not vals or not vals[0]:
+        return None
+    v = vals[0][0]
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def append_entry(
+    client: SheetsClient, entry: SheetsOutbox, *, person: Optional[str] = None
+) -> tuple[int, Optional[str]]:
     """Добавляет строку операции на нужный лист ПЕРЕД строкой ИТОГО и расширяет
-    диапазон формулы итога. Возвращает номер строки, куда записали."""
+    диапазон формулы итога.
+
+    Возвращает (номер строки, предупреждение|None). Итог проверяется по факту:
+    он обязан вырасти ровно на сумму записи. Если не вырос — сумма переписывается
+    в другом виде (текст ↔ число), потому что формулы итогов на листах разные
+    (REGEXREPLACE не берёт числа, SUBSTITUTE — берёт). Если и это не помогло,
+    строка остаётся на месте, а наверх уходит предупреждение."""
     title = SHEET_TITLES[entry.sheet]
     cols = SHEET_COLUMNS[entry.sheet]
     first_col, last_col = cols.split(":")
@@ -264,30 +301,68 @@ def append_entry(client: SheetsClient, entry: SheetsOutbox, *, person: Optional[
         raise SheetsError(f"на листе «{title}» не найдена строка ИТОГО — вставлять некуда")
 
     # Формулу итога читаем ДО вставки (после неё строка сдвинется вниз).
-    total_formulas = client.get_values(
-        f"{title}!{first_col}{total_row}:{last_col}{total_row}", render="FORMULA"
-    )
-    formula_row = total_formulas[0] if total_formulas else []
+    raw = client.get_values(f"{title}!{first_col}1:{last_col}1000", render="FORMULA")
+    formula_row = raw[total_row - 1] if len(raw) >= total_row else []
+
+    # Образец суммы — последняя заполненная строка данных выше ИТОГО: по ней
+    # определяем, пишут на этом листе суммы текстом («25 000,00 ₽») или числом.
+    # Колонка суммы: «Банк»/«Нал» — C (индекс 2), «Зарплата сотрудников» — D (3).
+    amount_idx = 3 if entry.sheet == "salary" else 2
+    sample = None
+    for prev in reversed(raw[1:total_row - 1]):
+        if len(prev) > amount_idx and prev[amount_idx] not in (None, ""):
+            sample = prev[amount_idx]
+            break
+
+    # Итог ДО вставки — для самопроверки после неё.
+    total_before = None
+    for offset, cell in enumerate(formula_row):
+        if isinstance(cell, str) and cell.startswith("="):
+            total_before = _total_value(client, title, chr(ord(first_col[0]) + offset), total_row)
+            break
 
     client.insert_row(title, total_row)
     client.update_values(
         f"{title}!{first_col}{total_row}:{last_col}{total_row}",
-        [build_row_values(entry, person=person)],
+        [build_row_values(entry, person=person, sample=sample)],
     )
 
     # Итог уехал на строку ниже; расширяем его диапазон на только что добавленную строку.
     new_total_row = total_row + 1
     updated = []
-    for cell in formula_row:
+    total_col = None
+    for offset, cell in enumerate(formula_row):
         if isinstance(cell, str) and cell.startswith("="):
             updated.append(bump_formula_range(cell, total_row))
+            total_col = chr(ord(first_col[0]) + offset)
         else:
             updated.append(cell)
     if updated and any(isinstance(c, str) and c.startswith("=") for c in updated):
         client.update_values(
             f"{title}!{first_col}{new_total_row}:{last_col}{new_total_row}", [updated]
         )
-    return total_row
+
+    # ---- самопроверка: итог обязан вырасти ровно на сумму записи ----
+    if total_col is None or total_before is None:
+        return total_row, None
+    amount = float(Decimal(str(entry.amount)))
+    after = _total_value(client, title, total_col, new_total_row)
+    if after is not None and abs(after - total_before - amount) < 0.01:
+        return total_row, None
+
+    # Не сошлось — пробуем записать сумму в другом виде.
+    alt = format_amount_text(Decimal(str(entry.amount))) if not isinstance(
+        build_row_values(entry, person=person, sample=sample)[-1], str
+    ) else float(Decimal(str(entry.amount)))
+    amount_col = chr(ord(first_col[0]) + amount_idx)
+    client.update_values(f"{title}!{amount_col}{total_row}:{amount_col}{total_row}", [[alt]])
+    after = _total_value(client, title, total_col, new_total_row)
+    if after is not None and abs(after - total_before - amount) < 0.01:
+        return total_row, None
+    return total_row, (
+        f"строка добавлена, но итог листа «{title}» не сошёлся "
+        f"(было {total_before}, стало {after}, сумма {amount}) — проверьте формулу ИТОГО"
+    )
 
 
 # ===================== Удобные обёртки под конкретные модели =====================

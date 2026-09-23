@@ -74,12 +74,12 @@ def main() -> int:
                 u = db.get(User, r.entity_id)
                 person = u.name if u else None
             try:
-                line = append_entry(client, r, person=person)
+                line, warning = append_entry(client, r, person=person)
                 r.status = "sent"
                 r.sent_at = datetime.utcnow()
-                r.last_error = None
+                r.last_error = warning
                 sent += 1
-                print(f"  #{r.id} → строка {line}")
+                print(f"  #{r.id} → строка {line}" + (f" ⚠ {warning}" if warning else ""))
             except (SheetsError, Exception) as e:  # noqa: B014 — любая ошибка = повтор позже
                 r.attempts += 1
                 r.last_error = str(e)[:500]

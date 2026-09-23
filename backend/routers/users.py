@@ -177,14 +177,20 @@ def list_users(
 
 @router.get("/colleagues", response_model=List[UserOut])
 def list_colleagues(
+    include_self: bool = False,
     db: Session = Depends(get_db),
     me: User = Depends(get_current_user),
 ):
     """Лёгкий список коллег своей org — нужен accountable для выбора approver/получателя transfer.
-    Без балансов, без admin-прав."""
-    q = db.query(User).filter(
-        User.org_id == me.org_id, User.id != me.id, User.is_active.is_(True)
-    )
+    Без балансов, без admin-прав.
+
+    По умолчанию САМ пользователь в список не попадает (нельзя передать деньги себе).
+    include_self=true — список «кто угодно из org, включая меня»: нужен там, где
+    выбирают, НА КОГО оформлена операция (правка расхода/прихода/выдачи), иначе
+    свои же записи нельзя оставить на себе и они молча уезжают на первого в списке."""
+    q = db.query(User).filter(User.org_id == me.org_id, User.is_active.is_(True))
+    if not include_self:
+        q = q.filter(User.id != me.id)
     hidden = hidden_user_ids(db, me)
     if hidden:  # Фича 2: конфиденциальные скрыты из dropdown «КТО/КОМУ» и пр.
         q = q.filter(User.id.notin_(hidden))

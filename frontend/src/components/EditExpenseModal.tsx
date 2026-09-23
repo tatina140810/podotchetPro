@@ -63,7 +63,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
   useEffect(() => {
     api<Category[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments(true).then(setDepartments).catch(() => {});
-    if (canEditEmployee) listColleagues().then(setColleagues).catch(() => {});
+    if (canEditEmployee) listColleagues(true).then(setColleagues).catch(() => {});
     loadReceipts();
   }, []);
 

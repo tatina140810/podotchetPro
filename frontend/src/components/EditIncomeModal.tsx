@@ -39,7 +39,7 @@ export function EditIncomeModal({ income, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    listColleagues().then(setColleagues).catch(() => {});
+    listColleagues(true).then(setColleagues).catch(() => {});
     listDepartments(true).then(setDepartments).catch(() => {});
   }, []);
 

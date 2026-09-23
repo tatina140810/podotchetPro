@@ -193,3 +193,21 @@ def test_request_uses_requester_binding(client):
     })
     assert r.status_code == 201, r.text
     assert r.json()["department_id"] == ids.depB
+
+
+# ----------------------- список коллег: выбор себя -----------------------
+
+def test_colleagues_include_self(client):
+    """Правка расхода даёт выбрать и СЕБЯ: без этого свой же расход нельзя было
+    оставить на себе, а селект подставлял первого в списке."""
+    ids = _fresh_seed()
+    hdr = _acc(ids)
+    plain = client.get("/api/users/colleagues", headers=hdr)
+    with_self = client.get("/api/users/colleagues?include_self=true", headers=hdr)
+    assert plain.status_code == 200 and with_self.status_code == 200
+    plain_ids = {u["id"] for u in plain.json()}
+    self_ids = {u["id"] for u in with_self.json()}
+    # Zero-diff: прежний вызов по-прежнему без себя (нельзя передать деньги себе).
+    assert ids.acc1 not in plain_ids
+    assert ids.acc1 in self_ids
+    assert plain_ids < self_ids

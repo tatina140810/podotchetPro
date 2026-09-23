@@ -39,8 +39,10 @@ export function listUsers(): Promise<UserWithBalance[]> {
   return api<UserWithBalance[]>("/api/users");
 }
 
-export function listColleagues(): Promise<UserOut[]> {
-  return api<UserOut[]>("/api/users/colleagues");
+export function listColleagues(includeSelf = false): Promise<UserOut[]> {
+  // includeSelf — для списков «на кого оформлена операция» (правка расхода/прихода/
+  // выдачи): там себя выбрать можно и нужно.
+  return api<UserOut[]>(`/api/users/colleagues${includeSelf ? "?include_self=true" : ""}`);
 }
 
 export function getUserBalance(userId: number): Promise<UserBalanceDetails> {

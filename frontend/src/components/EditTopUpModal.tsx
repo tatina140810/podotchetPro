@@ -34,7 +34,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    listColleagues().then(setColleagues).catch(() => {});
+    listColleagues(true).then(setColleagues).catch(() => {});
     api<CategoryOpt[]>("/api/categories").then(setCategories).catch(() => {});
     listDepartments().then(setDepartments).catch(() => {});
   }, []);

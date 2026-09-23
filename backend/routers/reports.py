@@ -1263,14 +1263,16 @@ def _build_department_report(
     """only_employee_id — личный отчёт сотрудника: расход считается только по его
     расходам, приход — только по выдачам, полученным им самим."""
     rates = load_org_rates(db, org_id)
-    usd = rates.get("USD")
+    # Курс ВЫБРАННОЙ валюты (а не доллара): при currency=RUB суммы делились на курс
+    # USD и отчёт по подразделениям показывал заниженные рубли.
+    disp_rate = rates.get(display_currency)
     start, end = _month_range(year, month)
     hidden = hidden_ids or set()
     exp_kgs = to_kgs_expr(Expense.amount, Expense.currency, rates)
     top_kgs = to_kgs_expr(BalanceTopUp.amount, BalanceTopUp.currency, rates)
 
     def disp(v: float) -> float:
-        return _to_display(float(v or 0), display_currency, usd)
+        return _to_display(float(v or 0), display_currency, disp_rate)
 
     # База расходов — те же фильтры, что в отчёте по категориям (для схождения сумм).
     exp_base = (
@@ -1461,7 +1463,8 @@ def _build_department_report(
     total_spent = sum(spent_by.values())
     return {
         "period": {"month": month, "year": year},
-        "currency": display_currency if (display_currency == "KGS" or usd) else "KGS",
+        "currency": display_currency if (display_currency == "KGS" or disp_rate) else "KGS",
+        "rate": float(disp_rate) if disp_rate else None,
         "departments": departments_out,
         "totals": {
             "received": disp(total_recv), "spent": disp(total_spent),

@@ -83,3 +83,15 @@ def test_employees_report_converts_to_rub(client):
     k_total = sum(r["spent"] for r in kgs["rows"])
     r_total = sum(r["spent"] for r in rub["rows"])
     assert k_total > 0 and abs(r_total - round(k_total / float(RUB_RATE), 2)) < 0.5
+
+
+def test_department_report_converts_to_rub(client):
+    """Отчёт по подразделениям раньше делил суммы на курс ДОЛЛАРА при выборе ₽."""
+    ids = _fresh_seed()
+    hdr = _hdr(ids)
+    kgs = client.get("/api/reports/by-department?year=2026&month=8&currency=KGS", headers=hdr).json()
+    rub = client.get("/api/reports/by-department?year=2026&month=8&currency=RUB", headers=hdr).json()
+    assert rub["currency"] == "RUB" and rub["rate"] == float(RUB_RATE)
+    k_spent = kgs["totals"]["spent"]
+    assert k_spent > 0
+    assert abs(rub["totals"]["spent"] - round(k_spent / float(RUB_RATE), 2)) < 0.5

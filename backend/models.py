@@ -415,6 +415,11 @@ class Expense(Base, SoftDeleteMixin):
         String(8), nullable=True, index=True
     )
     spent_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    # Расход по упрощённой заявке ждёт еженедельной выдачи владельцем: реальный (в балансе),
+    # но в три отчёта не попадает, пока не выпущен (routers/requests_report.release).
+    report_hold: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -606,6 +611,11 @@ class MoneyRequest(Base):
     # Шаг 3: владелец отклонил строку отчёта — расход отменён, заявка вернулась на правку.
     returned_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     returned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    # Шаг 4: выпуск в отчёты еженедельной выдачей владельца принимающему.
+    released_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    release_topup_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("balance_topups.id", ondelete="SET NULL"), nullable=True
+    )
 
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
     handler_category: Mapped[Optional[Category]] = relationship(foreign_keys=[handler_category_id])
@@ -732,6 +742,10 @@ class BalanceTopUp(Base, SoftDeleteMixin):
     # Форма расчёта: 'cash' (наличные) | 'bank' (безнал). NULL = не указано
     # (записи до миграции). Определяет, в какой лист Google-таблицы «Локомотив»
     # уходит запись: bank → «Банк», cash → «Нал».
+    # Выдача по упрощённой заявке — в отчёты вместе с её расходом, после выпуска.
+    report_hold: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
     payment_method: Mapped[Optional[str]] = mapped_column(
         String(8), nullable=True, index=True
     )

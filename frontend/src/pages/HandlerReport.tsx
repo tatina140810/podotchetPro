@@ -8,6 +8,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useToast } from "../components/Toast";
 import HandlerReportEditDialog from "../components/HandlerReportEditDialog";
+import ReleaseDialog from "../components/ReleaseDialog";
 import {
   approveHandlerReport, getHandlerReport, getRequestsConfig, rejectHandlerReportRow, type HandlerReportRow,
 } from "../api/requests";
@@ -25,21 +26,26 @@ export default function HandlerReport() {
   const [editing, setEditing] = useState<HandlerReportRow | null>(null);
   const [busy, setBusy] = useState(false);
   const [handler, setHandler] = useState("принимающего");
+  const [releasing, setReleasing] = useState(false);
 
   const reload = () => {
     setErr(null);
-    getHandlerReport(tab).then((r) => { setRows(r); setPicked(new Set()); }).catch((e) => setErr(e.message));
+    // Грузим всё: кнопке выпуска нужны одобренные строки на любой вкладке.
+    getHandlerReport("all").then((r) => { setRows(r); setPicked(new Set()); }).catch((e) => setErr(e.message));
   };
-  useEffect(reload, [tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(reload, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const shown = (rows ?? []).filter((r) => tab === "all" || r.status === tab);
   useEffect(() => { getRequestsConfig().then((c) => c.handler_name && setHandler(c.handler_name)).catch(() => {}); }, []);
 
   // Итоги по валютам: разные валюты не складываем в одну цифру.
   const totals = useMemo(() => {
     const t: Record<string, number> = {};
-    for (const r of rows ?? []) t[r.currency] = (t[r.currency] ?? 0) + Number(r.amount);
+    for (const r of shown) t[r.currency] = (t[r.currency] ?? 0) + Number(r.amount);
     return Object.entries(t);
-  }, [rows]);
-  const pending = (rows ?? []).filter((r) => r.status === "pending");
+  }, [rows, tab]); // eslint-disable-line react-hooks/exhaustive-deps
+  const pending = shown.filter((r) => r.status === "pending");
+  // Одобрено, но ещё не в отчётах — ждёт еженедельной выдачи (шаг 4).
+  const waiting = (rows ?? []).filter((r) => r.status === "approved" && r.report_hold);
 
   async function approve(ids: number[]) {
     if (!ids.length) return;
@@ -71,6 +77,11 @@ export default function HandlerReport() {
             {t === "pending" ? "На одобрении" : t === "approved" ? "Одобренные" : "Все"}
           </button>
         ))}
+        {waiting.length > 0 && (
+          <button style={{ marginLeft: "auto" }} disabled={busy} onClick={() => setReleasing(true)}>
+            Выдача: {handler} и выпуск в отчёты ({waiting.length})
+          </button>
+        )}
         {tab !== "approved" && pending.length > 0 && (
           <button className="success" style={{ marginLeft: "auto" }} disabled={busy || picked.size === 0}
             onClick={() => approve([...picked])}>Одобрить отмеченные ({picked.size})</button>
@@ -80,7 +91,7 @@ export default function HandlerReport() {
       {!rows && !err && <div className="muted">Загрузка...</div>}
       {rows && (
         <div className="card" style={{ overflow: "auto" }}>
-          {rows.length === 0 ? <div className="empty-state">Строк нет</div> : (
+          {shown.length === 0 ? <div className="empty-state">Строк нет</div> : (
             <table>
               <thead>
                 <tr>
@@ -93,7 +104,7 @@ export default function HandlerReport() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
+                {shown.map((r) => (
                   <tr key={r.expense_id}>
                     <td>{r.status === "pending" && (
                       <input type="checkbox" style={{ width: "auto" }} checked={picked.has(r.expense_id)} onChange={() => toggle(r.expense_id)} />
@@ -115,7 +126,12 @@ export default function HandlerReport() {
                         ? r.receipts.map((f, i) => <a key={f.id} href={f.file_url} target="_blank" rel="noreferrer">чек{r.receipts.length > 1 ? ` ${i + 1}` : ""} </a>)
                         : <span className="muted" title={r.no_receipt_comment ?? ""}>нет чека{r.no_receipt_comment ? `: ${r.no_receipt_comment}` : ""}</span>}
                     </td>
-                    <td><span className={`badge ${r.status === "approved" ? "approved" : "pending"}`}>{r.status === "approved" ? "Одобрено" : "На одобрении"}</span></td>
+                    <td>
+                      <span className={`badge ${r.status === "approved" ? "approved" : "pending"}`}>{r.status === "approved" ? "Одобрено" : "На одобрении"}</span>
+                      {r.status === "approved" && (
+                        <div className="muted" style={{ fontSize: 11, marginTop: 2 }}>{r.report_hold ? "ждёт выдачи" : "в отчётах"}</div>
+                      )}
+                    </td>
                     <td>{r.status === "pending" && (
                       <div className="row" style={{ gap: 4, justifyContent: "flex-end" }}>
                         <button className="success" style={{ padding: "4px 10px", fontSize: 12 }} disabled={busy} onClick={() => approve([r.expense_id])}>Одобрить</button>
@@ -135,6 +151,10 @@ export default function HandlerReport() {
             </table>
           )}
         </div>
+      )}
+      {releasing && (
+        <ReleaseDialog rows={waiting} handler={handler} onClose={() => setReleasing(false)}
+          onDone={() => { setReleasing(false); reload(); }} />
       )}
       {editing && (
         <HandlerReportEditDialog row={editing} onClose={() => setEditing(null)} onDone={() => { setEditing(null); reload(); }} />

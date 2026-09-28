@@ -233,6 +233,10 @@ export interface HandlerReportRow {
   amount: string; currency: string; amount_kgs: string | null; issued_amount: string | null;
   spent_at: string; status: string; description: string | null; receipts: MoneyRequestReceipt[];
   no_receipt: boolean; no_receipt_comment: string | null; recorded_by_name: string | null; reviewed_by_name: string | null;
+  report_hold?: boolean; released_at?: string | null;
+}
+export function releaseHandlerReport(body: { amount: string; currency: string; payment_method: "cash" | "bank"; note?: string }): Promise<{ ok: boolean; released: number }> {
+  return api("/api/requests/handler-report/release", { method: "POST", body });
 }
 export interface HandlerReportEdit {
   category_id?: number; department_id?: number; payment_method?: "cash" | "bank";

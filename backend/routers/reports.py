@@ -759,6 +759,7 @@ def _build_category_report(
         .filter(
             Expense.org_id == org_id,
             Expense.status.in_(("approved", "pending")),
+            Expense.report_hold.is_(False),  # расходы по заявкам — после выпуска владельцем
             Expense.expense_type == "expense",
             Expense.spent_at >= start,
             Expense.spent_at < end,
@@ -902,7 +903,8 @@ def _build_employees_report(
     # received = TopUp_in + Income (что пришло сотруднику за период)
     topup_in_q = (
         db.query(BalanceTopUp.user_id, func.coalesce(func.sum(topup_expr), 0))
-        .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end)
+        .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end,
+                BalanceTopUp.report_hold.is_(False))
     )
     if department_id is not None:
         topup_in_q = topup_in_q.filter(BalanceTopUp.department_id == department_id)
@@ -926,7 +928,8 @@ def _build_employees_report(
     # это уже включает все «передачи» — у каждого transfer есть пара BalanceTopUp.
     topup_out_q = (
         db.query(BalanceTopUp.admin_id, func.coalesce(func.sum(topup_expr), 0))
-        .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end)
+        .filter(BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end,
+                BalanceTopUp.report_hold.is_(False))
     )
     if department_id is not None:
         topup_out_q = topup_out_q.filter(BalanceTopUp.department_id == department_id)
@@ -942,6 +945,7 @@ def _build_employees_report(
         .filter(
             Expense.org_id == org_id,
             Expense.status.in_(("approved", "pending")),
+            Expense.report_hold.is_(False),  # расходы по заявкам — после выпуска владельцем
             Expense.expense_type == "expense",
             Expense.spent_at >= start,
             Expense.spent_at < end,
@@ -1281,6 +1285,7 @@ def _build_department_report(
         .filter(
             Expense.org_id == org_id,
             Expense.status.in_(("approved", "pending")),
+            Expense.report_hold.is_(False),  # расходы по заявкам — после выпуска владельцем
             Expense.expense_type == "expense",
             Expense.spent_at >= start, Expense.spent_at < end,
             (Category.id.is_(None)) | (Category.is_system.is_(False)),
@@ -1296,7 +1301,8 @@ def _build_department_report(
         exp_base = exp_base.filter(Expense.workspace_id.is_(None))
 
     top_base = db.query(BalanceTopUp).filter(
-        BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end
+        BalanceTopUp.org_id == org_id, BalanceTopUp.date >= start, BalanceTopUp.date < end,
+        BalanceTopUp.report_hold.is_(False),  # выдачи по заявкам — после выпуска (шаг 4)
     )
     if only_employee_id is not None:
         top_base = top_base.filter(BalanceTopUp.user_id == only_employee_id)

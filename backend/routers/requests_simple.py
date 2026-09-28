@@ -196,6 +196,7 @@ def issue_simple_request(
         # иначе _sync_topup_expense списал бы его сразу.
         category_id=None, department_id=req.department_id, payment_method=req.handler_payment_method,
         workspace_id=member_active_workspace_id(db, req.requester_id, req.org_id),
+        report_hold=True,  # в отчёты — вместе с расходом, после выпуска владельцем (шаг 4)
     )
     db.add(t)
     db.flush()
@@ -267,6 +268,7 @@ def close_simple_request(
         recorded_by_id=me.id, funded_by_id=me.id, source_request_id=req.id, expense_type="expense",
         payment_source="balance", payment_method=req.handler_payment_method, spent_at=spent,
         workspace_id=member_active_workspace_id(db, req.requester_id, req.org_id),
+        report_hold=True,  # в три отчёта — только после еженедельной выдачи владельцем (шаг 4)
     )
     db.add(e)
     db.flush()

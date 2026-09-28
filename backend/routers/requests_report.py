@@ -24,8 +24,10 @@ from models import (
     Organization, User,
 )
 from schemas import (
-    HandlerReportApprove, HandlerReportEdit, HandlerReportReject, HandlerReportRow,
+    HandlerReportApprove, HandlerReportEdit, HandlerReportReject, HandlerReportRelease, HandlerReportRow,
 )
+from services.exchange import get_current_rate
+from services.sheets_sync import enqueue_expense, enqueue_topup
 from services.audit import log_delete, log_update, snapshot
 from services.permissions import department_forbidden, forced_department_id
 from services.push_service import build_payload, send_push_to_user_sync
@@ -70,6 +72,7 @@ def _row(e: Expense, req: MoneyRequest) -> HandlerReportRow:
         no_receipt_comment=req.no_receipt_comment,
         recorded_by_name=e.recorded_by.name if getattr(e, "recorded_by", None) else None,
         reviewed_by_name=e.reviewed_by.name if getattr(e, "reviewed_by", None) else None,
+        report_hold=bool(e.report_hold), released_at=req.released_at,
     )
 
 
@@ -175,3 +178,59 @@ def reject_row(expense_id: int, payload: HandlerReportReject, background_tasks: 
     background_tasks.add_task(send_push_to_user_sync, req.approver_id, req.org_id, build_payload(
         "request_returned", {"request_id": req.id, "title": req.title, "comment": comment}))
     return {"ok": True, "request_id": req.id}
+
+
+@router.post("/release")
+def release_to_reports(payload: HandlerReportRelease, background_tasks: BackgroundTasks,
+                       db: Session = Depends(get_db), me: User = Depends(get_current_user)):
+    """Еженедельная выдача владельца принимающему (шаг 4): одна выдача Ice → Индира,
+    и все ОДОБРЕННЫЕ, ещё не выпущенные строки её отчёта (расход + выдача сотруднику)
+    уходят в три отчёта и в Google-таблицу. Строки «на одобрении» остаются ждать."""
+    _require_reviewer(db, me)
+    org = db.get(Organization, me.org_id)
+    handler = db.get(User, org.request_handler_id) if org and org.request_handler_id else None
+    if handler is None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "В организации не назначен принимающий заявки")
+    pairs = (db.query(Expense, MoneyRequest)
+             .join(MoneyRequest, MoneyRequest.expense_id == Expense.id)
+             .filter(MoneyRequest.org_id == me.org_id, MoneyRequest.flow == "simple",
+                     MoneyRequest.approver_id == handler.id,
+                     Expense.status == "approved", Expense.report_hold.is_(True))
+             .with_for_update(of=Expense).all())
+    if not pairs:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Нет одобренных строк, которые ждут выпуска в отчёты")
+
+    cur = payload.currency.upper()
+    amount = Decimal(str(payload.amount))
+    if cur == "KGS":
+        amount_kgs = amount
+    else:
+        rate = get_current_rate(db, me.org_id, cur, "KGS")
+        if rate is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Установите курс {cur}/KGS перед выдачей в {cur}")
+        amount_kgs = amount * rate
+    now = datetime.utcnow()
+    t = BalanceTopUp(
+        org_id=me.org_id, admin_id=me.id, user_id=handler.id, amount=amount, currency=cur,
+        amount_kgs=amount_kgs, date=now, category_id=None, department_id=None,
+        payment_method=payload.payment_method,
+        note=((payload.note or "").strip() or f"Выдача по отчёту о заявках ({len(pairs)} строк)")[:500],
+    )
+    db.add(t)
+    db.flush()
+    enqueue_topup(db, t)
+    for e, req in pairs:
+        e.report_hold = False
+        enqueue_expense(db, e)
+        if req.issue_topup_id:
+            it = db.get(BalanceTopUp, req.issue_topup_id)
+            if it is not None:
+                it.report_hold = False
+        req.released_at = now
+        req.release_topup_id = t.id
+    db.add(Notification(user_id=handler.id, org_id=me.org_id, type="balance_topup", payload={
+        "admin_id": me.id, "amount": str(amount), "note": t.note}))
+    db.commit()
+    background_tasks.add_task(send_push_to_user_sync, handler.id, me.org_id, build_payload(
+        "balance_topup", {"amount": str(amount), "admin_name": me.name, "note": t.note}))
+    return {"ok": True, "released": len(pairs), "topup_id": t.id}

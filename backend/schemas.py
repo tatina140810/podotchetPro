@@ -828,6 +828,17 @@ class HandlerReportRow(BaseModel):
     no_receipt_comment: Optional[str] = None
     recorded_by_name: Optional[str] = None
     reviewed_by_name: Optional[str] = None
+    report_hold: bool = False
+    released_at: Optional[datetime] = None
+
+
+class HandlerReportRelease(BaseModel):
+    """Еженедельная выдача владельца принимающему: деньги — одной выдачей, и все
+    одобренные, но ещё не выпущенные строки уходят в три отчёта."""
+    amount: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
+    currency: str = Field(default="KGS", pattern=CURRENCY_PATTERN)
+    payment_method: str = Field(..., pattern="^(cash|bank)$")
+    note: Optional[str] = Field(default=None, max_length=500)
 
 
 class HandlerReportEdit(BaseModel):

@@ -244,3 +244,41 @@ def test_reject_cancels_expense_and_returns_request(client, db, data):
     # Индира исправляет и проводит заново — появляется новый расход.
     r = _close(client, data.indira, rid, no_receipt=True, no_receipt_comment="без чека, исправлено")
     assert r.status_code == 200 and r.json()["expense_id"] != eid
+
+
+# ===================== Шаг 4: в три отчёта — только после выпуска =====================
+from datetime import datetime as _dt  # noqa: E402
+from routers.reports import (  # noqa: E402
+    _build_category_report, _build_department_report, _build_employees_report,
+)
+
+
+def _reports(db, d):
+    db.expire_all()
+    now = _dt.utcnow()
+    cat = _build_category_report(db, d.org.id, now.year, now.month)["total_expenses"]
+    emp = {r["name"]: r for r in _build_employees_report(db, d.org.id, now.year, now.month)["rows"]}
+    dep = _build_department_report(db, d.org.id, now.year, now.month)["totals"]
+    return cat, emp.get("Чоро", {}).get("spent", 0), emp.get("Чоро", {}).get("received", 0), dep["spent"], dep["received"]
+
+
+def test_hold_until_release(client, db, data):
+    rid, eid = _closed(client, data)          # выдано 280, расход 280, на одобрении
+    assert _reports(db, data) == (0, 0, 0, 0, 0)
+    assert client.post("/api/requests/handler-report/release", headers=auth_headers(data.ice), json={
+        "amount": "280", "currency": "KGS", "payment_method": "cash"}).status_code == 400   # ещё не одобрено
+    client.post("/api/requests/handler-report/approve", headers=auth_headers(data.ice), json={"expense_ids": [eid]})
+    assert _reports(db, data) == (0, 0, 0, 0, 0)   # одобрено, но до выдачи — в отчётах нет
+    b_ind = _bal(db, data.org.id, data.indira.id)
+    assert client.post("/api/requests/handler-report/release", headers=auth_headers(data.indira), json={
+        "amount": "280", "currency": "KGS", "payment_method": "cash"}).status_code == 403   # только Ice
+    r = client.post("/api/requests/handler-report/release", headers=auth_headers(data.ice), json={
+        "amount": "280", "currency": "KGS", "payment_method": "cash"})
+    assert r.status_code == 200 and r.json()["released"] == 1, r.text
+    cat, spent, received, dep_spent, dep_received = _reports(db, data)
+    assert cat == 280 and spent == 280 and received == 280 and dep_spent == 280
+    # Индира получила недельную выдачу — её минус закрыт.
+    assert _bal(db, data.org.id, data.indira.id) == b_ind + Decimal("280")
+    # Повторный выпуск — нечего выпускать.
+    assert client.post("/api/requests/handler-report/release", headers=auth_headers(data.ice), json={
+        "amount": "10", "currency": "KGS", "payment_method": "cash"}).status_code == 400

@@ -168,6 +168,26 @@ R2 пока не используется.
   **Ключ сервисного аккаунта лежит в `/root/PodotchetPRO/secrets/` — НЕ в `backend/`**:
   `deploy.sh` синхронизирует backend с `--delete` и снёс бы его.
 
+## Упрощённые заявки → принимающий (2026-09-28, Ice / Тати)
+
+`MoneyRequest.flow='simple'`. Настройки организации: `request_handler_id` (принимает —
+Индира), `request_reviewer_id` (одобряет её отчёт — Ice). Путь и статусы:
+`pending` (у принимающего) → `accepted` (разноска: категория, подразделение, нал/безнал,
+сумма, дата; деньги НЕ двигаются) → `issued` («Выдал» = BalanceTopUp принимающий →
+заявитель) → `closed` (чек или «нет чека» + коммент → Expense заявителя pending,
+`recorded_by`=принимающий) → отчёт у проверяющего (`/api/requests/handler-report`:
+одобрить / править / отклонить = soft delete расхода, заявка снова `issued`) →
+еженедельная выдача проверяющего принимающему (`/release`) выпускает строки в отчёты.
+- ⚠️ Статус `approved` этот путь НЕ использует: он двигает деньги сам
+  (`_approved_requests_in/out`) — был бы двойной учёт. Старый `/approve` для simple = 400.
+- `expenses.report_hold` / `balance_topups.report_hold`: запись реальная (в балансе),
+  но отчёты по категориям/сотрудникам/подразделениям (+их xlsx) её не показывают до
+  выпуска. Новый запрос в этих трёх построителях (`routers/reports.py`) обязан
+  фильтровать `report_hold.is_(False)`.
+- Сотрудник не правит и не удаляет расход, внесённый за него другим (`_can_modify_expense`).
+- Код: `routers/requests_simple.py`, `routers/requests_report.py`, тесты
+  `tests/test_simple_requests.py`.
+
 ## Деплой
 
 ```bash

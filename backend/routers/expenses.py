@@ -717,6 +717,15 @@ def review_expense(
     e = db.get(Expense, expense_id)
     if not e or e.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Не найдено")
+    # Расход, проведённый принимающим по упрощённой заявке, одобряет только владелец
+    # (отчёт принимающего, routers/requests_report) — сама принимающая свой отчёт
+    # через общую проверку расходов не одобряет.
+    if e.source_request_id is not None:
+        from models import MoneyRequest as _MR
+        from routers.requests_report import is_request_reviewer
+        src = db.get(_MR, e.source_request_id)
+        if src is not None and src.flow == "simple" and not is_request_reviewer(db, me):
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Этот расход одобряет владелец в отчёте по заявкам")
     e.status = payload.status
     e.review_comment = payload.review_comment
     e.reviewed_by_id = me.id

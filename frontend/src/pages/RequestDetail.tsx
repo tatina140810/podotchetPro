@@ -243,6 +243,11 @@ export default function RequestDetail() {
         />
       )}
 
+      {simple && req.status === "issued" && req.returned_comment && (
+        <div className="card" style={{ marginTop: 12, borderLeft: "4px solid var(--danger)" }}>
+          <b>Возвращено на правку</b>{req.returned_at ? ` ${new Date(req.returned_at).toLocaleString("ru-RU")}` : ""}: {req.returned_comment}
+        </div>
+      )}
       {simple && isApprover && req.status === "issued" && (
         <CloseRequestPanel req={req} onDone={setReq} />
       )}

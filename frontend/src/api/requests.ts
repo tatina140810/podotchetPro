@@ -71,10 +71,15 @@ export interface MoneyRequest {
   no_receipt_comment?: string | null;
   closed_at?: string | null;
   expense_id?: number | null;
+  returned_comment?: string | null;
+  returned_at?: string | null;
 }
 
 // ===== Упрощённые заявки (2026-09-28) =====
-export interface RequestsConfig { handler_id: number | null; handler_name: string | null; simple_form: boolean }
+export interface RequestsConfig {
+  handler_id: number | null; handler_name: string | null; simple_form: boolean;
+  is_reviewer?: boolean; reviewer_name?: string | null;
+}
 export interface SimpleItemIn { description: string; customer?: string; quantity: number; amount: string; comment?: string }
 export interface AcceptPayload {
   category_id: number; department_id: number; payment_method: "cash" | "bank";
@@ -218,4 +223,30 @@ export function addRequestReceipt(
 
 export function deleteRequestReceipt(requestId: number, receiptId: number): Promise<void> {
   return api<void>(`/api/requests/${requestId}/receipts/${receiptId}`, { method: "DELETE" });
+}
+
+// ===== Отчёт принимающего на одобрении у владельца (шаг 3) =====
+export interface HandlerReportRow {
+  expense_id: number; request_id: number; request_title: string; requester_name: string | null;
+  items: MoneyRequestItem[]; category_id: number | null; category_name: string | null;
+  department_id: number | null; department_name: string | null; payment_method: "cash" | "bank" | null;
+  amount: string; currency: string; amount_kgs: string | null; issued_amount: string | null;
+  spent_at: string; status: string; description: string | null; receipts: MoneyRequestReceipt[];
+  no_receipt: boolean; no_receipt_comment: string | null; recorded_by_name: string | null; reviewed_by_name: string | null;
+}
+export interface HandlerReportEdit {
+  category_id?: number; department_id?: number; payment_method?: "cash" | "bank";
+  amount?: string; spent_date?: string; description?: string;
+}
+export function getHandlerReport(status: "pending" | "approved" | "all"): Promise<HandlerReportRow[]> {
+  return api<HandlerReportRow[]>(`/api/requests/handler-report?status=${status}`);
+}
+export function editHandlerReportRow(id: number, body: HandlerReportEdit): Promise<HandlerReportRow> {
+  return api<HandlerReportRow>(`/api/requests/handler-report/${id}`, { method: "PATCH", body });
+}
+export function approveHandlerReport(ids: number[]): Promise<HandlerReportRow[]> {
+  return api<HandlerReportRow[]>("/api/requests/handler-report/approve", { method: "POST", body: { expense_ids: ids } });
+}
+export function rejectHandlerReportRow(id: number, comment: string): Promise<{ ok: boolean }> {
+  return api(`/api/requests/handler-report/${id}/reject`, { method: "POST", body: { comment } });
 }

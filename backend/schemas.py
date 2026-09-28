@@ -754,6 +754,8 @@ class MoneyRequestOut(BaseModel):
     no_receipt_comment: Optional[str] = None
     closed_at: Optional[datetime] = None
     expense_id: Optional[int] = None
+    returned_comment: Optional[str] = None
+    returned_at: Optional[datetime] = None
 
 
 # ===================== Упрощённые заявки (2026-09-28) =====================
@@ -799,6 +801,50 @@ class RequestsConfigOut(BaseModel):
     handler_id: Optional[int] = None
     handler_name: Optional[str] = None
     simple_form: bool = False  # показать ТЕКУЩЕМУ пользователю упрощённую форму
+    is_reviewer: bool = False  # текущий пользователь одобряет отчёт принимающего
+    reviewer_name: Optional[str] = None
+
+
+class HandlerReportRow(BaseModel):
+    expense_id: int
+    request_id: int
+    request_title: str
+    requester_name: Optional[str] = None
+    items: List[MoneyRequestItemOut] = Field(default_factory=list)
+    category_id: Optional[int] = None
+    category_name: Optional[str] = None
+    department_id: Optional[int] = None
+    department_name: Optional[str] = None
+    payment_method: Optional[str] = None
+    amount: Decimal
+    currency: str
+    amount_kgs: Optional[Decimal] = None
+    issued_amount: Optional[Decimal] = None
+    spent_at: datetime
+    status: str
+    description: Optional[str] = None
+    receipts: List[MoneyRequestReceiptOut] = Field(default_factory=list)
+    no_receipt: bool = False
+    no_receipt_comment: Optional[str] = None
+    recorded_by_name: Optional[str] = None
+    reviewed_by_name: Optional[str] = None
+
+
+class HandlerReportEdit(BaseModel):
+    category_id: Optional[int] = None
+    department_id: Optional[int] = None
+    payment_method: Optional[str] = Field(default=None, pattern="^(cash|bank)$")
+    amount: Optional[Decimal] = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    spent_date: Optional[date] = None
+    description: Optional[str] = Field(default=None, max_length=1000)
+
+
+class HandlerReportApprove(BaseModel):
+    expense_ids: List[int] = Field(..., min_length=1, max_length=500)
+
+
+class HandlerReportReject(BaseModel):
+    comment: str = Field(..., min_length=3, max_length=2000)
 
 
 # ===================== MONEY TRANSFERS =====================

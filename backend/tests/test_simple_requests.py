@@ -36,6 +36,7 @@ def data(db):
     indira = user("Индира", "+7202", role="admin")
     ice = user("Ice", "+7203", role="admin")
     org.request_handler_id = indira.id
+    org.request_reviewer_id = ice.id
     cat = Category(org_id=org.id, name="Хозтовары")
     dep = Department(org_id=org.id, name="Локомотив")
     db.add_all([cat, dep])
@@ -65,7 +66,8 @@ def _accept(client, who, rid, d, amount="300"):
 
 def test_config_simple_for_everyone_but_handler(client, data):
     r = client.get("/api/requests/config", headers=auth_headers(data.choro)).json()
-    assert r == {"handler_id": data.indira.id, "handler_name": "Индира", "simple_form": True}
+    assert (r["handler_id"], r["handler_name"], r["simple_form"], r["is_reviewer"]) == (data.indira.id, "Индира", True, False)
+    assert client.get("/api/requests/config", headers=auth_headers(data.ice)).json()["is_reviewer"] is True
     assert client.get("/api/requests/config", headers=auth_headers(data.ice)).json()["simple_form"] is True
     assert client.get("/api/requests/config", headers=auth_headers(data.indira)).json()["simple_form"] is False
 
@@ -186,3 +188,59 @@ def test_close_partial_amount_leaves_rest_on_balance(client, db, data):
     assert _close(client, data.indira, rid, amount="200.00", no_receipt=True,
                   no_receipt_comment="без чека").status_code == 200
     assert _bal(db, data.org.id, data.choro.id) == b_choro + Decimal("80")
+
+
+
+# ===================== Шаг 3: отчёт Индиры у Ice =====================
+
+def _closed(client, d, amount="280"):
+    rid = _issued(client, d, amount=amount)
+    r = _close(client, d.indira, rid, no_receipt=True, no_receipt_comment="без чека")
+    assert r.status_code == 200, r.text
+    return rid, r.json()["expense_id"]
+
+
+def test_only_reviewer_sees_and_approves(client, db, data):
+    rid, eid = _closed(client, data)
+    assert client.get("/api/requests/handler-report", headers=auth_headers(data.indira)).status_code == 403
+    rows = client.get("/api/requests/handler-report", headers=auth_headers(data.ice)).json()
+    assert [r["expense_id"] for r in rows] == [eid] and rows[0]["requester_name"] == "Чоро"
+    # Индира не может одобрить свой отчёт и через общую проверку расходов.
+    r = client.post(f"/api/expenses/{eid}/review", headers=auth_headers(data.indira), json={"status": "approved"})
+    assert r.status_code == 403
+    r = client.post("/api/requests/handler-report/approve", headers=auth_headers(data.ice), json={"expense_ids": [eid, eid]})
+    assert r.status_code == 200 and len(r.json()) == 1
+    db.expire_all()
+    assert db.get(Expense, eid).status == "approved" and db.get(Expense, eid).reviewed_by_id == data.ice.id
+    # Одобренную строку править нельзя.
+    assert client.patch(f"/api/requests/handler-report/{eid}", headers=auth_headers(data.ice),
+                        json={"amount": "100"}).status_code == 400
+
+
+def test_reviewer_edits_amount(client, db, data):
+    b_choro = _bal(db, data.org.id, data.choro.id)
+    rid, eid = _closed(client, data)
+    assert client.patch(f"/api/requests/handler-report/{eid}", headers=auth_headers(data.ice),
+                        json={"amount": "500"}).status_code == 400          # больше выданного
+    r = client.patch(f"/api/requests/handler-report/{eid}", headers=auth_headers(data.ice),
+                     json={"amount": "250.00", "payment_method": "bank"})
+    assert r.status_code == 200, r.text
+    assert Decimal(r.json()["amount"]) == Decimal("250") and r.json()["payment_method"] == "bank"
+    assert _bal(db, data.org.id, data.choro.id) == b_choro + Decimal("30")   # 280 выдано − 250 расход
+
+
+def test_reject_cancels_expense_and_returns_request(client, db, data):
+    b_choro = _bal(db, data.org.id, data.choro.id)
+    rid, eid = _closed(client, data)
+    assert _bal(db, data.org.id, data.choro.id) == b_choro
+    r = client.post(f"/api/requests/handler-report/{eid}/reject", headers=auth_headers(data.ice),
+                    json={"comment": "не та категория"})
+    assert r.status_code == 200, r.text
+    db.expire_all()
+    req = db.get(MoneyRequest, rid)
+    assert req.status == "issued" and req.expense_id is None and req.returned_comment == "не та категория"
+    # Расход отменён — выданные деньги снова числятся на сотруднике.
+    assert _bal(db, data.org.id, data.choro.id) == b_choro + Decimal("280")
+    # Индира исправляет и проводит заново — появляется новый расход.
+    r = _close(client, data.indira, rid, no_receipt=True, no_receipt_comment="без чека, исправлено")
+    assert r.status_code == 200 and r.json()["expense_id"] != eid

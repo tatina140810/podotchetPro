@@ -72,6 +72,10 @@ def build_payload(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
         title = "Деньги выданы"
         body = f"{data.get('title', '')}\nВыдано {data.get('amount', '')} {data.get('currency', '')}. Ждём отчёт и чек"
         url = f"/requests/{data.get('request_id')}" if data.get("request_id") else "/requests"
+    elif event_type == "request_returned":
+        title = "Заявка возвращена на правку"
+        body = f"{data.get('title', '')}\n{data.get('comment', '')}"
+        url = f"/requests/{data.get('request_id')}" if data.get("request_id") else "/requests"
     elif event_type == "request_closed":
         title = "Расход по заявке проведён"
         body = f"{data.get('title', '')}\n{data.get('amount', '')} {data.get('currency', '')}"

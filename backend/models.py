@@ -65,6 +65,10 @@ class Organization(Base):
     request_handler_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL", use_alter=True), nullable=True
     )
+    # Кто одобряет расходы, проведённые принимающим по заявкам (отчёт Индиры → Ice).
+    request_reviewer_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", use_alter=True), nullable=True
+    )
 
     users: Mapped[list["User"]] = relationship(
         back_populates="organization", cascade="all,delete-orphan", foreign_keys="User.org_id"
@@ -599,6 +603,9 @@ class MoneyRequest(Base):
     expense_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("expenses.id", ondelete="SET NULL", use_alter=True), nullable=True, unique=True
     )
+    # Шаг 3: владелец отклонил строку отчёта — расход отменён, заявка вернулась на правку.
+    returned_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    returned_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
     handler_category: Mapped[Optional[Category]] = relationship(foreign_keys=[handler_category_id])

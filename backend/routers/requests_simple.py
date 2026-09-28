@@ -69,10 +69,14 @@ def requests_config(db: Session = Depends(get_db), me: User = Depends(get_curren
     """Какую форму заявки показать: упрощённую — всем, кроме самого принимающего
     (ему заявку отправлять некому, у него прежняя форма с выбором адресата)."""
     h = _handler_of(db, me.org_id)
+    org = db.get(Organization, me.org_id)
+    reviewer = db.get(User, org.request_reviewer_id) if org and org.request_reviewer_id else None
     return RequestsConfigOut(
         handler_id=h.id if h else None,
         handler_name=h.name if h else None,
         simple_form=bool(h and h.id != me.id),
+        is_reviewer=bool(org and (org.request_reviewer_id == me.id or me.role == "superadmin")),
+        reviewer_name=reviewer.name if reviewer else None,
     )
 
 

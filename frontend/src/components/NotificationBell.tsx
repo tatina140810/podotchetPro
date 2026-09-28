@@ -48,6 +48,13 @@ function describe(n: NotificationItem): Describe {
         subtitle: "Одобрено, можете забрать у бухгалтерии",
         href: reqId ? `/requests/${reqId}` : undefined,
       };
+    case "request_returned":
+      return {
+        icon: "",
+        title: `Возвращено на правку${title ? ": " + title : ""}`,
+        subtitle: comment || undefined,
+        href: reqId ? `/requests/${reqId}` : undefined,
+      };
     case "request_closed":
       return {
         icon: "",

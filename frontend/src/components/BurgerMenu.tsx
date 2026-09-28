@@ -3,11 +3,15 @@ import { NavLink } from "react-router-dom";
 import { useAuth, isDirectorOrAuditor } from "../context/AuthContext";
 import { useSettings } from "../context/SettingsContext";
 import { api } from "../api/client";
+import { getRequestsConfig, type RequestsConfig } from "../api/requests";
 
 export function BurgerMenu() {
   const { user, logout } = useAuth();
   const { flag } = useSettings();
   const [open, setOpen] = useState(false);
+  // Пункт «Отчёт <принимающего>» — только тому, кто его одобряет (шаг 3 заявок).
+  const [reqCfg, setReqCfg] = useState<RequestsConfig | null>(null);
+  useEffect(() => { if (user) getRequestsConfig().then(setReqCfg).catch(() => {}); }, [user?.id]);
 
   async function deleteAccount() {
     if (!confirm(
@@ -57,6 +61,9 @@ export function BurgerMenu() {
         // «Приходы» — только admin/superadmin и gen_director (НЕ аудитору)
         ...(user.role !== "auditor" ? [{ to: "/reports/incomes", label: "Приходы" }] : []),
         { to: "/requests", label: "Заявки" },
+        ...(reqCfg?.is_reviewer && reqCfg.handler_name
+          ? [{ to: "/requests/handler-report", label: `Отчёт: ${reqCfg.handler_name}` }]
+          : []),
         { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/expenses", label: "Расходы" },
         { to: "/supplier-advances", label: "Авансы поставщикам" },

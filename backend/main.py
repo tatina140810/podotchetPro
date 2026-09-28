@@ -29,6 +29,7 @@ from routers import (
     reports,
     requests as requests_router,
     requests_simple as requests_simple_router,
+    requests_report as requests_report_router,
     settings as settings_router,
     specs,
     super_panel,
@@ -79,6 +80,7 @@ app.include_router(reports.router)
 app.include_router(dashboard.router)
 app.include_router(chat.router)
 # Упрощённые заявки — РАНЬШЕ основного роутера: /api/requests/config иначе съел бы /{request_id}.
+app.include_router(requests_report_router.router)
 app.include_router(requests_simple_router.router)
 app.include_router(requests_router.router)
 app.include_router(transfers.router)

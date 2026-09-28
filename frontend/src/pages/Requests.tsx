@@ -157,7 +157,8 @@ export default function Requests() {
                   const canIssue = simple && r.status === "accepted" && mine;
                   const busy = busyId === r.id;
                   const receipt = !simple || !["issued", "closed"].includes(r.status)
-                    ? "—" : (r.receipts.length ? "есть" : "нет");
+                    ? "—" : r.receipts.length ? "есть" : r.no_receipt ? "нет чека" : "нет";
+                  const canClose = simple && r.status === "issued" && mine;
                   return (
                     <tr key={r.id}>
                       <td>
@@ -171,11 +172,16 @@ export default function Requests() {
                           {statusLabel(r.status, r.requester_id === user?.id)}
                         </span>
                       </td>
-                      <td className="muted" style={{ fontSize: 12 }}>{receipt}</td>
+                      <td className="muted" style={{ fontSize: 12 }} title={r.no_receipt_comment ?? undefined}>{receipt}</td>
                       <td className="muted" style={{ fontSize: 12 }}>
                         {new Date(r.created_at).toLocaleDateString("ru-RU")}
                       </td>
                       <td>
+                        {canClose && (
+                          <div className="row" style={{ justifyContent: "flex-end" }}>
+                            <Link to={`/requests/${r.id}`}><button className="ghost" style={{ padding: "4px 10px", fontSize: 12 }}>Провести</button></Link>
+                          </div>
+                        )}
                         {canIssue && (
                           <div className="row" style={{ justifyContent: "flex-end" }}>
                             <button className="success" style={{ padding: "4px 10px", fontSize: 12 }}

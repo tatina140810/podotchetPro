@@ -547,6 +547,10 @@ def _can_modify_expense(me: User, e: Expense) -> bool:
       правит и переотправляет; approved заблокирован → 403)."""
     if is_director_or_auditor(me):
         return True
+    # Расход, который за сотрудника внёс другой человек (например, по заявке — Индира),
+    # сотрудник не правит и не удаляет: иначе мог бы убрать проведённый за него расход.
+    if e.recorded_by_id is not None and e.recorded_by_id != me.id:
+        return False
     return e.employee_id == me.id and e.status in ("pending", "rejected")
 
 

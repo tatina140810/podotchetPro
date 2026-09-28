@@ -48,6 +48,13 @@ function describe(n: NotificationItem): Describe {
         subtitle: "Одобрено, можете забрать у бухгалтерии",
         href: reqId ? `/requests/${reqId}` : undefined,
       };
+    case "request_closed":
+      return {
+        icon: "",
+        title: `Расход проведён${title ? ": " + title : ""}`,
+        subtitle: amount ? `Сумма: ${amount}` : undefined,
+        href: reqId ? `/requests/${reqId}` : undefined,
+      };
     case "request_issued":
       return {
         icon: "",

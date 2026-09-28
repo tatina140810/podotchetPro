@@ -750,6 +750,10 @@ class MoneyRequestOut(BaseModel):
     issued_by_id: Optional[int] = None
     issued_by_name: Optional[str] = None
     issue_topup_id: Optional[int] = None
+    no_receipt: bool = False
+    no_receipt_comment: Optional[str] = None
+    closed_at: Optional[datetime] = None
+    expense_id: Optional[int] = None
 
 
 # ===================== Упрощённые заявки (2026-09-28) =====================
@@ -780,6 +784,15 @@ class SimpleRequestAccept(BaseModel):
     currency: str = Field(..., pattern=CURRENCY_PATTERN)
     spent_date: date
     comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class SimpleRequestClose(BaseModel):
+    """Закрыть выданную заявку расходом. Сумма — фактически потраченная (по умолчанию
+    выданная); остаток, если потрачено меньше, остаётся на подотчёте сотрудника.
+    Без чека — только с отметкой no_receipt и комментарием."""
+    amount: Optional[Decimal] = Field(default=None, gt=0, max_digits=12, decimal_places=2)
+    no_receipt: bool = False
+    no_receipt_comment: Optional[str] = Field(default=None, max_length=2000)
 
 
 class RequestsConfigOut(BaseModel):

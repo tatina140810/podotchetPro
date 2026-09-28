@@ -15,6 +15,7 @@ import {
 import { STATUS_CLS, statusLabel } from "../lib/requestStatus";
 import AcceptRequestDialog from "../components/AcceptRequestDialog";
 import { SimpleRequestInfo } from "../components/SimpleRequestInfo";
+import CloseRequestPanel from "../components/CloseRequestPanel";
 import { RequestReceipts } from "../components/RequestReceipts";
 import { ApproveRequestPanel } from "../components/ApproveRequestPanel";
 import { RequestItemsTable } from "../components/RequestItemsTable";
@@ -87,8 +88,10 @@ export default function RequestDetail() {
   // Чеки: только у одобренной заявки. Крепить — заявитель, адресат, директор
   // (то же правило продублировано на бэкенде). Удалять — свой документ; директор — любой.
   const isDirector = user?.role === "superadmin" || user?.role === "admin" || user?.role === "gen_director";
-  const showReceipts = req.status === "approved";
-  const canAttach = showReceipts && (isMine || isApprover || isDirector);
+  const simpleFlow = req.flow === "simple";
+  // Упрощённая заявка: чек прикладывают после выдачи; после закрытия — только просмотр.
+  const showReceipts = req.status === "approved" || (simpleFlow && ["issued", "closed"].includes(req.status));
+  const canAttach = (req.status === "approved" || (simpleFlow && req.status === "issued")) && (isMine || isApprover || isDirector);
 
   async function doSubmit() {
     setBusy(true);
@@ -238,6 +241,10 @@ export default function RequestDetail() {
           canDelete={(r: MoneyRequestReceipt) => isDirector || r.uploaded_by_id === user?.id}
           onChanged={(receipts) => setReq((prev) => (prev ? { ...prev, receipts } : prev))}
         />
+      )}
+
+      {simple && isApprover && req.status === "issued" && (
+        <CloseRequestPanel req={req} onDone={setReq} />
       )}
 
       <h2 className="h2" style={{ marginTop: 18 }}>Строки</h2>

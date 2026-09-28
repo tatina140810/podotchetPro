@@ -127,3 +127,62 @@ def test_reject_simple_request(client, data):
     rid = _submit(client, data.choro).json()["id"]
     r = client.post(f"/api/requests/{rid}/reject", headers=auth_headers(data.indira), json={"comment": "не нужно"})
     assert r.status_code == 200 and r.json()["status"] == "rejected"
+
+
+# ===================== Шаг 2: чек и закрытие расходом =====================
+from models import Expense  # noqa: E402
+
+
+def _issued(client, d, amount="280"):
+    rid = _submit(client, d.choro).json()["id"]
+    assert _accept(client, d.indira, rid, d, amount=amount).status_code == 200
+    assert client.post(f"/api/requests/{rid}/issue", headers=auth_headers(d.indira)).status_code == 200
+    return rid
+
+
+def _close(client, who, rid, **body):
+    return client.post(f"/api/requests/{rid}/close", headers=auth_headers(who), json=body)
+
+
+def test_close_needs_receipt_or_no_receipt_comment(client, data):
+    rid = _issued(client, data)
+    assert _close(client, data.indira, rid).status_code == 400                      # нет чека
+    assert _close(client, data.indira, rid, no_receipt=True).status_code == 400     # без комментария
+    assert _close(client, data.indira, rid, no_receipt=True, no_receipt_comment="ок").status_code == 400  # коротко
+    r = _close(client, data.indira, rid, no_receipt=True, no_receipt_comment="таксист без чека")
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "closed" and r.json()["no_receipt"] is True
+
+
+def test_close_with_receipt_moves_expense_to_employee(client, db, data):
+    b_choro, b_ind = _bal(db, data.org.id, data.choro.id), _bal(db, data.org.id, data.indira.id)
+    rid = _issued(client, data)
+    # Чек прикладывает сам сотрудник — после выдачи это разрешено.
+    r = client.post(f"/api/requests/{rid}/receipts", headers=auth_headers(data.choro),
+                    json={"file_url": "/uploads/1/chek.jpg", "file_name": "чек.jpg"})
+    assert r.status_code == 201, r.text
+    assert _close(client, data.choro, rid).status_code == 403   # проводит только принимающий
+    r = _close(client, data.indira, rid)
+    assert r.status_code == 200, r.text
+    exp = db.get(Expense, r.json()["expense_id"])
+    assert exp.employee_id == data.choro.id and exp.recorded_by_id == data.indira.id
+    assert exp.status == "pending" and exp.category_id == data.cat.id and exp.payment_method == "cash"
+    assert Decimal(str(exp.amount)) == Decimal("280")
+    # Сотрудник потратил всё выданное — у него снова прежний остаток; у Индиры — минус выдачи.
+    assert _bal(db, data.org.id, data.choro.id) == b_choro
+    assert _bal(db, data.org.id, data.indira.id) == b_ind - Decimal("280")
+    # Повтор — отказ, второго расхода нет.
+    assert _close(client, data.indira, rid).status_code == 409
+    assert db.query(Expense).filter(Expense.source_request_id == rid).count() == 1
+    # Проведённый за него расход сотрудник удалить не может.
+    assert client.delete(f"/api/expenses/{exp.id}", headers=auth_headers(data.choro)).status_code == 403
+
+
+def test_close_partial_amount_leaves_rest_on_balance(client, db, data):
+    b_choro = _bal(db, data.org.id, data.choro.id)
+    rid = _issued(client, data)
+    assert _close(client, data.indira, rid, amount="300.00", no_receipt=True,
+                  no_receipt_comment="без чека").status_code == 400   # больше выданного
+    assert _close(client, data.indira, rid, amount="200.00", no_receipt=True,
+                  no_receipt_comment="без чека").status_code == 200
+    assert _bal(db, data.org.id, data.choro.id) == b_choro + Decimal("80")

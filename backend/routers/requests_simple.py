@@ -9,7 +9,10 @@
      Статус accepted. ДЕНЬГИ НЕ ДВИГАЮТСЯ — заявка копится у принимающего.
   3. «Выдал»: выдача balance_topups принимающий → заявитель (у принимающего минус,
      у заявителя плюс). Статус issued, заявителю — «ждём отчёт».
-  (Чек и расход — шаг 2, отчёт принимающего у владельца — шаг 3.)
+  4. Чек (заявитель или принимающий прикладывает) или «нет чека» + комментарий →
+     принимающий «Провести расход»: расход ЗАЯВИТЕЛЯ (у него минус), внёс —
+     принимающий (recorded_by). Статус closed. Расход в статусе pending — его
+     одобряет владелец в отчёте принимающего (шаг 3).
 
 Статус 'approved' здесь НЕ используется: он двигает деньги сам
 (services/balance._approved_requests_in/out), а деньги этого пути двигает только выдача.
@@ -24,10 +27,12 @@ from sqlalchemy.orm import Session
 from auth import get_current_user
 from database import get_db
 from models import (
-    BalanceTopUp, Category, Department, MoneyRequest, MoneyRequestItem, Notification,
-    Organization, RecordChangeLog, User,
+    BalanceTopUp, Category, Department, Expense, ExpenseReceipt, MoneyRequest, MoneyRequestItem,
+    Notification, Organization, RecordChangeLog, User,
 )
-from schemas import MoneyRequestOut, RequestsConfigOut, SimpleRequestAccept, SimpleRequestCreate
+from schemas import (
+    MoneyRequestOut, RequestsConfigOut, SimpleRequestAccept, SimpleRequestClose, SimpleRequestCreate,
+)
 from services.exchange import get_current_rate
 from services.permissions import department_forbidden, forced_department_id, member_active_workspace_id
 from services.push_service import build_payload, send_push_to_user_sync
@@ -200,5 +205,82 @@ def issue_simple_request(
     db.commit()
     db.refresh(req)
     _push(background_tasks, req.requester_id, req.org_id, "request_issued",
+          {"request_id": req.id, "title": req.title, "amount": str(amount), "currency": cur})
+    return _to_out(req)
+
+
+@router.post("/{request_id}/close", response_model=MoneyRequestOut)
+def close_simple_request(
+    request_id: int,
+    payload: SimpleRequestClose,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    me: User = Depends(get_current_user),
+):
+    """Провести расход по выданной заявке и закрыть её. Нужен чек или отметка
+    «нет чека» с комментарием. Повтор не создаёт второй расход (FOR UPDATE + UNIQUE)."""
+    locked = db.query(MoneyRequest).filter(MoneyRequest.id == request_id).with_for_update().one_or_none()
+    if locked is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+    req = _load_simple(db, me, request_id)
+    if req.expense_id is not None or req.status == "closed":
+        raise HTTPException(status.HTTP_409_CONFLICT, "Расход по этой заявке уже проведён")
+    if req.status != "issued":
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Провести расход можно только по выданной заявке")
+    note = (payload.no_receipt_comment or "").strip()
+    if payload.no_receipt:
+        if len(note) < 3:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "«Нет чека» — напишите комментарий, почему")
+    elif not req.receipts:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Приложите чек или отметьте «нет чека» с комментарием")
+
+    cur = (req.handler_currency or "KGS").upper()
+    amount = Decimal(str(payload.amount if payload.amount is not None else req.handler_amount))
+    issued = Decimal(str(req.handler_amount))
+    if amount > issued:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Потрачено больше, чем выдано по заявке")
+    # КГС по тому же курсу, что и выдача: иначе копеечная разница курсов оставила бы
+    # у сотрудника «хвост» при полностью потраченной выдаче.
+    topup = db.get(BalanceTopUp, req.issue_topup_id) if req.issue_topup_id else None
+    if topup is not None and topup.amount_kgs is not None and issued > 0:
+        amount_kgs = (Decimal(str(topup.amount_kgs)) * amount / issued).quantize(Decimal("0.01"))
+    elif cur == "KGS":
+        amount_kgs = amount
+    else:
+        rate = get_current_rate(db, req.org_id, cur, "KGS")
+        if rate is None:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Установите курс {cur}/KGS")
+        amount_kgs = amount * rate
+
+    spent = datetime.combine(req.handler_date, datetime.min.time()) if req.handler_date else datetime.utcnow()
+    lines = "; ".join(
+        f"{it.description}" + (f" ({it.customer})" if it.customer else "") for it in req.items
+    )
+    e = Expense(
+        org_id=req.org_id, employee_id=req.requester_id, category_id=req.handler_category_id,
+        department_id=req.department_id, amount=amount, currency=cur, amount_kgs=amount_kgs,
+        description=f"Заявка №{req.id}: {lines}"[:1000], status="pending",
+        recorded_by_id=me.id, funded_by_id=me.id, source_request_id=req.id, expense_type="expense",
+        payment_source="balance", payment_method=req.handler_payment_method, spent_at=spent,
+        workspace_id=member_active_workspace_id(db, req.requester_id, req.org_id),
+    )
+    db.add(e)
+    db.flush()
+    # Чеки заявки — и к расходу: в отчёте Индиры и у проверяющего они на месте.
+    for r in req.receipts:
+        db.add(ExpenseReceipt(org_id=req.org_id, expense_id=e.id, file_url=r.file_url,
+                              file_name=r.file_name, uploaded_by_id=r.uploaded_by_id))
+    now = datetime.utcnow()
+    req.no_receipt = bool(payload.no_receipt)
+    req.no_receipt_comment = note or None
+    req.expense_id = e.id
+    req.closed_at = now
+    req.closed_by_id = me.id
+    req.status = "closed"
+    db.add(Notification(user_id=req.requester_id, org_id=req.org_id, type="request_closed", payload={
+        "request_id": req.id, "title": req.title, "amount": str(amount), "currency": cur}))
+    db.commit()
+    db.refresh(req)
+    _push(background_tasks, req.requester_id, req.org_id, "request_closed",
           {"request_id": req.id, "title": req.title, "amount": str(amount), "currency": cur})
     return _to_out(req)

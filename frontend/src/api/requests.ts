@@ -67,6 +67,10 @@ export interface MoneyRequest {
   issued_at?: string | null;
   issued_by_name?: string | null;
   issue_topup_id?: number | null;
+  no_receipt?: boolean;
+  no_receipt_comment?: string | null;
+  closed_at?: string | null;
+  expense_id?: number | null;
 }
 
 // ===== Упрощённые заявки (2026-09-28) =====
@@ -85,6 +89,9 @@ export function createSimpleRequest(payload: { currency: string; items: SimpleIt
 }
 export function acceptRequest(id: number, payload: AcceptPayload): Promise<MoneyRequest> {
   return api<MoneyRequest>(`/api/requests/${id}/accept`, { method: "POST", body: payload });
+}
+export function closeRequest(id: number, body: { amount?: string; no_receipt?: boolean; no_receipt_comment?: string }): Promise<MoneyRequest> {
+  return api<MoneyRequest>(`/api/requests/${id}/close`, { method: "POST", body });
 }
 export function issueRequest(id: number): Promise<MoneyRequest> {
   return api<MoneyRequest>(`/api/requests/${id}/issue`, { method: "POST" });

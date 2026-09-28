@@ -20,6 +20,8 @@ export function SimpleRequestInfo({ req }: { req: MoneyRequest }) {
       {req.issued_at && (
         <Row k="Выдано" v={`${new Date(req.issued_at).toLocaleString("ru-RU")}${req.issued_by_name ? ` — ${req.issued_by_name}` : ""}`} />
       )}
+      {req.closed_at && <Row k="Расход проведён" v={new Date(req.closed_at).toLocaleString("ru-RU")} />}
+      {req.no_receipt && <Row k="Чек" v={`нет чека — ${req.no_receipt_comment ?? ""}`} />}
     </div>
   );
 }

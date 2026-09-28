@@ -587,6 +587,18 @@ class MoneyRequest(Base):
     issue_topup_id: Mapped[Optional[int]] = mapped_column(
         ForeignKey("balance_topups.id", ondelete="SET NULL"), nullable=True, unique=True
     )
+    # Шаг 2: чек или «нет чека» (+ обязательный комментарий) и закрытие расходом.
+    no_receipt: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=sa.text("false"), nullable=False
+    )
+    no_receipt_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    closed_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    expense_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("expenses.id", ondelete="SET NULL", use_alter=True), nullable=True, unique=True
+    )
 
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
     handler_category: Mapped[Optional[Category]] = relationship(foreign_keys=[handler_category_id])

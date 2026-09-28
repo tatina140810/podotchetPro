@@ -779,10 +779,12 @@ def add_request_receipt(
     """Прикрепить документ к одобренной заявке. Может заявитель, адресат
     (кто одобрил) и директор-уровень. Аудитор — read-only."""
     req = _load_request_visible(db, me, request_id)
-    if req.status != "approved":
+    # Упрощённая заявка: чек прикладывают после выдачи денег (до проведения расхода).
+    simple_open = req.flow == "simple" and req.status == "issued"
+    if req.status != "approved" and not simple_open:
         raise HTTPException(
             status.HTTP_400_BAD_REQUEST,
-            "Прикреплять документы можно только к одобренной заявке",
+            "Прикреплять документы можно только к одобренной или выданной заявке",
         )
     allowed = is_director_level(me) or me.id in (req.requester_id, req.approver_id)
     if not allowed:

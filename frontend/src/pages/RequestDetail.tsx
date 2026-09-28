@@ -6,12 +6,15 @@ import {
   approveRequest,
   deleteRequest,
   getRequest,
+  issueRequest,
   rejectRequest,
   submitRequest,
   type MoneyRequest,
   type MoneyRequestReceipt,
-  type RequestStatus,
 } from "../api/requests";
+import { STATUS_CLS, statusLabel } from "../lib/requestStatus";
+import AcceptRequestDialog from "../components/AcceptRequestDialog";
+import { SimpleRequestInfo } from "../components/SimpleRequestInfo";
 import { RequestReceipts } from "../components/RequestReceipts";
 import { ApproveRequestPanel } from "../components/ApproveRequestPanel";
 import { RequestItemsTable } from "../components/RequestItemsTable";
@@ -20,19 +23,6 @@ import { api } from "../api/client";
 import { listDepartments, type Department } from "../api/departments";
 import type { CatOpt } from "../components/CategoryPicker";
 
-const STATUS_RU: Record<RequestStatus, string> = {
-  draft: "Черновик",
-  pending: "На одобрении",
-  approved: "Одобрена",
-  rejected: "Отклонена",
-};
-
-const STATUS_CLS: Record<RequestStatus, string> = {
-  draft: "pending",
-  pending: "pending",
-  approved: "approved",
-  rejected: "rejected",
-};
 
 export default function RequestDetail() {
   const { id } = useParams<{ id: string }>();
@@ -47,6 +37,7 @@ export default function RequestDetail() {
   const [comment, setComment] = useState("");
   // Режим «проверить и одобрить»: адресат правит поля перед одобрением.
   const [checking, setChecking] = useState(false);
+  const [accepting, setAccepting] = useState(false); // упрощённая заявка: окно разноски
   const [cats, setCats] = useState<CatOpt[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
 
@@ -77,6 +68,22 @@ export default function RequestDetail() {
   const canSubmit = isMine && req.status === "draft";
   const canApprove = isApprover && req.status === "pending";
   const canDelete = isMine && (req.status === "draft" || req.status === "rejected");
+  const simple = req.flow === "simple";
+  const canIssue = simple && isApprover && req.status === "accepted";
+
+  async function doIssue() {
+    if (!req) return;
+    if (!confirm(`Выдать ${req.requester_name ?? ""} ${Number(req.handler_amount).toLocaleString("ru-RU")} ${req.handler_currency === "KGS" ? "с" : req.handler_currency}?`)) return;
+    setBusy(true);
+    try {
+      setReq(await issueRequest(requestId));
+      toast.show("success", "Выдано — сотруднику ушло «ждём отчёт»");
+    } catch (e: any) {
+      toast.show("error", e.message || "Ошибка");
+    } finally {
+      setBusy(false);
+    }
+  }
   // Чеки: только у одобренной заявки. Крепить — заявитель, адресат, директор
   // (то же правило продублировано на бэкенде). Удалять — свой документ; директор — любой.
   const isDirector = user?.role === "superadmin" || user?.role === "admin" || user?.role === "gen_director";
@@ -160,19 +167,19 @@ export default function RequestDetail() {
               fontSize: 12,
             }}
           >
-            {req.is_expense_on_approve ? "Заявка на расход" : "Выдача под отчёт"}
+            {simple ? "Заявка сотрудника" : req.is_expense_on_approve ? "Заявка на расход" : "Выдача под отчёт"}
           </span>
         </div>
         <div className="row between">
           <span className="muted">Статус</span>
-          <span className={`badge ${STATUS_CLS[req.status]}`}>{STATUS_RU[req.status]}</span>
+          <span className={`badge ${STATUS_CLS[req.status] ?? "pending"}`}>{statusLabel(req.status, isMine)}</span>
         </div>
         <div className="row between">
           <span className="muted">Заявитель</span>
           <span>{req.requester_name || "—"}</span>
         </div>
         <div className="row between">
-          <span className="muted">Кому отправлено</span>
+          <span className="muted">{simple ? "Принимает заявку" : "Кому отправлено"}</span>
           <span>{req.approver_name || "—"}</span>
         </div>
         <div className="row between">
@@ -221,6 +228,8 @@ export default function RequestDetail() {
         </div>
       )}
 
+      {simple && <SimpleRequestInfo req={req} />}
+
       {showReceipts && (
         <RequestReceipts
           requestId={requestId}
@@ -246,10 +255,13 @@ export default function RequestDetail() {
             <button className="ghost" onClick={() => setRejecting((v) => !v)} disabled={busy}>
               Отклонить
             </button>
-            <button className="success" onClick={() => { setRejecting(false); setChecking(true); }} disabled={busy}>
+            <button className="success" onClick={() => { setRejecting(false); if (simple) setAccepting(true); else setChecking(true); }} disabled={busy}>
               Одобрить
             </button>
           </>
+        )}
+        {canIssue && (
+          <button className="success" onClick={doIssue} disabled={busy}>Выдал</button>
         )}
       </div>
 
@@ -262,6 +274,11 @@ export default function RequestDetail() {
           onCancel={() => setChecking(false)}
           onConfirm={(edits) => doApprove(edits)}
         />
+      )}
+
+      {accepting && canApprove && (
+        <AcceptRequestDialog req={req} onClose={() => setAccepting(false)}
+          onDone={(r) => { setAccepting(false); setReq(r); }} />
       )}
 
       {rejecting && canApprove && (

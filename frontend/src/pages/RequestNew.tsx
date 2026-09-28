@@ -6,9 +6,12 @@ import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import {
   createRequest,
+  getRequestsConfig,
   submitRequest,
   type MoneyRequestItemIn,
+  type RequestsConfig,
 } from "../api/requests";
+import SimpleRequestForm from "../components/SimpleRequestForm";
 import { listColleagues } from "../api/users";
 import { listDepartments, type Department } from "../api/departments";
 
@@ -27,7 +30,18 @@ interface DraftItem {
 
 const EMPTY_ITEM: DraftItem = { description: "", category_id: null, quantity: "1", amount: "" };
 
+// Упрощённая форма — всем, кроме самого принимающего заявки (2026-09-28).
 export default function RequestNew() {
+  const [cfg, setCfg] = useState<RequestsConfig | null>(null);
+  useEffect(() => {
+    getRequestsConfig().then(setCfg).catch(() => setCfg({ handler_id: null, handler_name: null, simple_form: false }));
+  }, []);
+  if (!cfg) return <div className="container muted">Загрузка...</div>;
+  if (cfg.simple_form && cfg.handler_name) return <SimpleRequestForm handlerName={cfg.handler_name} />;
+  return <FullRequestForm />;
+}
+
+function FullRequestForm() {
   const { user } = useAuth();
   const nav = useNavigate();
   const toast = useToast();

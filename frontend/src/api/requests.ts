@@ -1,6 +1,8 @@
 import { api } from "./client";
 
-export type RequestStatus = "draft" | "pending" | "approved" | "rejected";
+// accepted/issued/closed — упрощённые заявки (flow="simple", 2026-09-28):
+// одобрена с разноской → выдано (ждём чек) → закрыта.
+export type RequestStatus = "draft" | "pending" | "approved" | "rejected" | "accepted" | "issued" | "closed";
 
 export interface MoneyRequestItem {
   id: number;
@@ -10,6 +12,8 @@ export interface MoneyRequestItem {
   description: string;
   amount: string;  // Decimal сериализуется как строка
   quantity: number;
+  customer?: string | null;
+  comment?: string | null;
 }
 
 export interface MoneyRequestItemIn {
@@ -51,6 +55,39 @@ export interface MoneyRequest {
   approved_at: string | null;
   items: MoneyRequestItem[];
   receipts: MoneyRequestReceipt[];
+  // Упрощённая заявка
+  flow?: string | null;
+  handler_category_id?: number | null;
+  handler_category_name?: string | null;
+  handler_payment_method?: "cash" | "bank" | null;
+  handler_amount?: string | null;
+  handler_currency?: string | null;
+  handler_date?: string | null;
+  handler_comment?: string | null;
+  issued_at?: string | null;
+  issued_by_name?: string | null;
+  issue_topup_id?: number | null;
+}
+
+// ===== Упрощённые заявки (2026-09-28) =====
+export interface RequestsConfig { handler_id: number | null; handler_name: string | null; simple_form: boolean }
+export interface SimpleItemIn { description: string; customer?: string; quantity: number; amount: string; comment?: string }
+export interface AcceptPayload {
+  category_id: number; department_id: number; payment_method: "cash" | "bank";
+  amount: string; currency: string; spent_date: string; comment?: string;
+}
+
+export function getRequestsConfig(): Promise<RequestsConfig> {
+  return api<RequestsConfig>("/api/requests/config");
+}
+export function createSimpleRequest(payload: { currency: string; items: SimpleItemIn[] }): Promise<MoneyRequest> {
+  return api<MoneyRequest>("/api/requests/simple", { method: "POST", body: payload });
+}
+export function acceptRequest(id: number, payload: AcceptPayload): Promise<MoneyRequest> {
+  return api<MoneyRequest>(`/api/requests/${id}/accept`, { method: "POST", body: payload });
+}
+export function issueRequest(id: number): Promise<MoneyRequest> {
+  return api<MoneyRequest>(`/api/requests/${id}/issue`, { method: "POST" });
 }
 
 export function listRequests(params: {

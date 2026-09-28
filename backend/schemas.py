@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional, List
 
@@ -640,6 +640,8 @@ class MoneyRequestItemOut(BaseModel):
     description: str
     amount: Decimal
     quantity: int
+    customer: Optional[str] = None
+    comment: Optional[str] = None
 
 
 class MoneyRequestCreate(BaseModel):
@@ -735,6 +737,55 @@ class MoneyRequestOut(BaseModel):
     approved_at: Optional[datetime] = None
     items: List[MoneyRequestItemOut] = Field(default_factory=list)
     receipts: List[MoneyRequestReceiptOut] = Field(default_factory=list)
+    # Упрощённая заявка (2026-09-28)
+    flow: Optional[str] = None
+    handler_category_id: Optional[int] = None
+    handler_category_name: Optional[str] = None
+    handler_payment_method: Optional[str] = None
+    handler_amount: Optional[Decimal] = None
+    handler_currency: Optional[str] = None
+    handler_date: Optional[date] = None
+    handler_comment: Optional[str] = None
+    issued_at: Optional[datetime] = None
+    issued_by_id: Optional[int] = None
+    issued_by_name: Optional[str] = None
+    issue_topup_id: Optional[int] = None
+
+
+# ===================== Упрощённые заявки (2026-09-28) =====================
+# Сотрудник пишет свободно: описание, заказчик, кол-во, сумма, комментарий. Ни
+# категорий, ни подразделения, ни выбора адресата — заявка уходит принимающему
+# (organizations.request_handler_id), он и разносит её при одобрении.
+
+class SimpleRequestItemIn(BaseModel):
+    description: str = Field(..., min_length=1, max_length=500)
+    customer: Optional[str] = Field(default=None, max_length=200)
+    quantity: int = Field(default=1, ge=1, le=100000)
+    amount: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class SimpleRequestCreate(BaseModel):
+    currency: str = Field(default="KGS", pattern=CURRENCY_PATTERN)
+    items: List[SimpleRequestItemIn] = Field(..., min_length=1, max_length=50)
+
+
+class SimpleRequestAccept(BaseModel):
+    """Разноска при одобрении — как строка «Импорта истории». Сумма и валюта —
+    к выдаче (могут отличаться от запрошенного: принимающий корректирует)."""
+    category_id: int
+    department_id: int
+    payment_method: str = Field(..., pattern="^(cash|bank)$")
+    amount: Decimal = Field(..., gt=0, max_digits=12, decimal_places=2)
+    currency: str = Field(..., pattern=CURRENCY_PATTERN)
+    spent_date: date
+    comment: Optional[str] = Field(default=None, max_length=2000)
+
+
+class RequestsConfigOut(BaseModel):
+    handler_id: Optional[int] = None
+    handler_name: Optional[str] = None
+    simple_form: bool = False  # показать ТЕКУЩЕМУ пользователю упрощённую форму
 
 
 # ===================== MONEY TRANSFERS =====================

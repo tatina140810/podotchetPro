@@ -91,6 +91,10 @@ def _to_out(req: MoneyRequest) -> MoneyRequestOut:
     out.department_name = req.department.name if req.department else None
     out.items = [_item_to_out(it) for it in req.items]
     out.receipts = [_receipt_to_out(r) for r in req.receipts]
+    out.handler_category_name = req.handler_category.name if req.handler_category else None
+    if req.issued_by_id:
+        u = req.approver if req.approver and req.approver.id == req.issued_by_id else None
+        out.issued_by_name = u.name if u else None
     return out
 
 
@@ -161,7 +165,7 @@ def _notify(db: Session, user_id: int, org_id: int, ntype: str, payload: dict) -
 @router.get("", response_model=List[MoneyRequestOut])
 def list_requests(
     status_filter: Optional[str] = Query(default=None, alias="status",
-                                          pattern="^(draft|pending|approved|rejected)$"),
+                                          pattern="^(draft|pending|approved|rejected|accepted|issued|closed)$"),
     date_from: Optional[datetime] = None,
     date_to: Optional[datetime] = None,
     limit: int = Query(default=200, le=1000),
@@ -584,6 +588,9 @@ def approve_request(
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
     if req.approver_id != me.id:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Только адресат может одобрить эту заявку")
+    if req.flow == "simple":
+        # У упрощённой заявки своё одобрение (/accept) — деньги двигает только «Выдал».
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "Эту заявку одобряют через «Одобрить» с разноской")
     if req.status != "pending":
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "Одобрить можно только pending")
 
@@ -717,6 +724,9 @@ def delete_request(
     req = db.get(MoneyRequest, request_id)
     if not req or req.org_id != me.org_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Заявка не найдена")
+    # Выданную упрощённую заявку не удаляем: к ней привязана выдача денег.
+    if req.issue_topup_id is not None:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "По заявке уже выданы деньги — удалить нельзя")
     # auditor+ может удалить любую заявку (inline-edit в профиле). Связанный Expense
     # сохраняется: expenses.source_request_id = SET NULL при удалении заявки.
     if not is_director_or_auditor(me):

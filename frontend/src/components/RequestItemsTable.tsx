@@ -6,16 +6,19 @@ export function RequestItemsTable({ items, total, curLabel }: {
   total: string;
   curLabel: string;
 }) {
+  // Упрощённая заявка: «Заказчик» и «Комментарий» строки вместо категории.
+  const simple = items.some((it) => it.customer || it.comment);
   return (
     <div className="card" style={{ overflow: "auto" }}>
       <table>
         <thead>
           <tr>
             <th>Описание</th>
-            <th>Категория</th>
+            {simple ? <th>Заказчик</th> : <th>Категория</th>}
             <th style={{ textAlign: "right" }}>Кол-во</th>
             <th style={{ textAlign: "right" }}>Сумма</th>
             <th style={{ textAlign: "right" }}>Итого</th>
+            {simple && <th>Комментарий</th>}
           </tr>
         </thead>
         <tbody>
@@ -24,7 +27,7 @@ export function RequestItemsTable({ items, total, curLabel }: {
             return (
               <tr key={it.id}>
                 <td>{it.description}</td>
-                <td className="muted">{it.category_name || "—"}</td>
+                <td className="muted">{simple ? it.customer || "—" : it.category_name || "—"}</td>
                 <td style={{ textAlign: "right" }}>{it.quantity}</td>
                 <td style={{ textAlign: "right" }}>
                   {Number(it.amount).toLocaleString("ru-RU")} {curLabel}
@@ -32,6 +35,7 @@ export function RequestItemsTable({ items, total, curLabel }: {
                 <td style={{ textAlign: "right", fontWeight: 600 }}>
                   {subtotal.toLocaleString("ru-RU")} {curLabel}
                 </td>
+                {simple && <td className="muted">{it.comment || "—"}</td>}
               </tr>
             );
           })}

@@ -1,9 +1,10 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Optional
 
 from sqlalchemy import (
     CheckConstraint,
     Boolean,
+    Date,
     DateTime,
     ForeignKey,
     Integer,
@@ -60,8 +61,14 @@ class Organization(Base):
     plan_activated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     plan_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
+    # Кто принимает упрощённые заявки сотрудников (2026-09-28). NULL — прежняя форма.
+    request_handler_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL", use_alter=True), nullable=True
+    )
 
-    users: Mapped[list["User"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
+    users: Mapped[list["User"]] = relationship(
+        back_populates="organization", cascade="all,delete-orphan", foreign_keys="User.org_id"
+    )
     categories: Mapped[list["Category"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
     departments: Mapped[list["Department"]] = relationship(back_populates="organization", cascade="all,delete-orphan")
 
@@ -201,7 +208,7 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), nullable=False)
 
-    organization: Mapped[Organization] = relationship(back_populates="users")
+    organization: Mapped[Organization] = relationship(back_populates="users", foreign_keys=[org_id])
     spec: Mapped[Optional["EmployeeSpec"]] = relationship(
         back_populates="user",
         uselist=False,
@@ -559,7 +566,30 @@ class MoneyRequest(Base):
     )
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
+    # Упрощённая заявка (2026-09-28): flow='simple'. Статусы: pending («у принимающего»)
+    # → accepted (одобрена с разноской, деньги ещё НЕ двигались) → issued («Выдал» =
+    # выдача balance_topups принимающий → заявитель) → closed (шаг 2) | rejected.
+    # Статус 'approved' этот путь НЕ использует: он двигает деньги сам
+    # (services/balance._approved_requests_in/out) и дал бы двойную выдачу.
+    flow: Mapped[Optional[str]] = mapped_column(String(16), nullable=True)
+    handler_category_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
+    )
+    handler_payment_method: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    handler_amount: Mapped[Optional[float]] = mapped_column(Numeric(12, 2), nullable=True)
+    handler_currency: Mapped[Optional[str]] = mapped_column(String(8), nullable=True)
+    handler_date: Mapped[Optional[date]] = mapped_column(Date, nullable=True)
+    handler_comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    issued_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    issued_by_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    issue_topup_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("balance_topups.id", ondelete="SET NULL"), nullable=True, unique=True
+    )
+
     requester: Mapped[User] = relationship(foreign_keys=[requester_id])
+    handler_category: Mapped[Optional[Category]] = relationship(foreign_keys=[handler_category_id])
     approver: Mapped[User] = relationship(foreign_keys=[approver_id])
     expense_category: Mapped[Optional[Category]] = relationship(foreign_keys=[expense_category_id])
     department: Mapped[Optional["Department"]] = relationship(foreign_keys=[department_id])
@@ -586,6 +616,9 @@ class MoneyRequestItem(Base):
     description: Mapped[str] = mapped_column(String(500), nullable=False)
     amount: Mapped[float] = mapped_column(Numeric(12, 2), nullable=False)
     quantity: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    # Упрощённая заявка: заказчик (свободный текст) и комментарий строки.
+    customer: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
+    comment: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     request: Mapped[MoneyRequest] = relationship(back_populates="items")
     category: Mapped[Optional[Category]] = relationship()

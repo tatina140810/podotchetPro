@@ -145,7 +145,7 @@ def accept_simple_request(
     req.handler_date = payload.spent_date
     req.handler_comment = (payload.comment or "").strip() or None
     req.status = "accepted"
-    req.approved_at = datetime.utcnow()
+    req.approved_at = datetime.now()
     db.add(RecordChangeLog(org_id=req.org_id, entity_type="money_request", entity_id=req.id,
                            action="update", changed_by=me.id, diff={"accepted": {
                                "category_id": cat.id, "department_id": dep_id,
@@ -188,7 +188,7 @@ def issue_simple_request(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Установите курс {cur}/KGS перед выдачей в {cur}")
         amount_kgs = amount * rate
 
-    now = datetime.utcnow()
+    now = datetime.now()
     t = BalanceTopUp(
         org_id=req.org_id, admin_id=me.id, user_id=req.requester_id, amount=amount, currency=cur,
         amount_kgs=amount_kgs, note=f"Выдача по заявке №{req.id}: {req.title}"[:500], date=now,
@@ -257,7 +257,7 @@ def close_simple_request(
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Установите курс {cur}/KGS")
         amount_kgs = amount * rate
 
-    spent = datetime.combine(req.handler_date, datetime.min.time()) if req.handler_date else datetime.utcnow()
+    spent = datetime.combine(req.handler_date, datetime.min.time()) if req.handler_date else datetime.now()
     lines = "; ".join(
         f"{it.description}" + (f" ({it.customer})" if it.customer else "") for it in req.items
     )
@@ -276,7 +276,7 @@ def close_simple_request(
     for r in req.receipts:
         db.add(ExpenseReceipt(org_id=req.org_id, expense_id=e.id, file_url=r.file_url,
                               file_name=r.file_name, uploaded_by_id=r.uploaded_by_id))
-    now = datetime.utcnow()
+    now = datetime.now()
     req.no_receipt = bool(payload.no_receipt)
     req.no_receipt_comment = note or None
     req.expense_id = e.id

@@ -171,7 +171,7 @@ def reject_row(expense_id: int, payload: HandlerReportReject, background_tasks: 
     req.closed_by_id = None
     req.status = "issued"
     req.returned_comment = comment
-    req.returned_at = datetime.utcnow()
+    req.returned_at = datetime.now()
     db.add(Notification(user_id=req.approver_id, org_id=req.org_id, type="request_returned", payload={
         "request_id": req.id, "title": req.title, "comment": comment}))
     db.commit()
@@ -209,7 +209,7 @@ def release_to_reports(payload: HandlerReportRelease, background_tasks: Backgrou
         if rate is None:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, f"Установите курс {cur}/KGS перед выдачей в {cur}")
         amount_kgs = amount * rate
-    now = datetime.utcnow()
+    now = datetime.now()
     t = BalanceTopUp(
         org_id=me.org_id, admin_id=me.id, user_id=handler.id, amount=amount, currency=cur,
         amount_kgs=amount_kgs, date=now, category_id=None, department_id=None,

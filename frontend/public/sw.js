@@ -11,7 +11,7 @@
  * Версия инкрементируется при изменении стратегий — старые кэши сносятся в activate.
  */
 
-const VERSION = "v23";
+const VERSION = "v24";
 const SHELL_CACHE = `pp-shell-${VERSION}`;
 const API_CACHE = `pp-api-${VERSION}`;
 
@@ -35,8 +35,12 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   const url = new URL(req.url);
 
-  // API — отдельная логика (включая POST для офлайн-очереди расходов)
+  // API — отдельная логика (включая POST для офлайн-очереди расходов).
+  // Остальные изменяющие запросы (загрузка чеков и т.п.) браузер шлёт САМ, без
+  // service worker: Safari на iPhone при пересыле из SW теряет тело multipart-формы,
+  // и сервер получал запрос без файла — 422 «чек не загрузился» (2026-09-29).
   if (url.pathname.startsWith("/api/")) {
+    if (req.method !== "GET" && url.pathname !== "/api/expenses") return;
     event.respondWith(handleApi(req));
     return;
   }

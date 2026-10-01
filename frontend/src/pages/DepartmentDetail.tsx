@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import { useToast } from "../components/Toast";
 import { EditExpenseModal } from "../components/EditExpenseModal";
 import { isDirectorLevel, isDirectorOrAuditor, useAuth } from "../context/AuthContext";
+import { useDisplayCurrency, currencySymbol } from "../context/CurrencyContext";
 
 const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
 
@@ -35,6 +36,9 @@ export default function DepartmentDetail() {
   const deptId = Number(id);
   const toast = useToast();
   const { user } = useAuth();
+  // Тумблер с/$/₽ в шапке: итоги подразделения пересчитывает сервер по курсу выбранной
+  // валюты (Тати 2026-10-01: «поставила рубль — не применился», было зашито currency=KGS).
+  const { display } = useDisplayCurrency();
   const canReview = isDirectorLevel(user?.role);
   // Личный режим (сотрудник со своими отчётами): админский список операций
   // подразделения ему недоступен — берём его собственные расходы из /api/expenses,
@@ -54,7 +58,7 @@ export default function DepartmentDetail() {
   const [catNames, setCatNames] = useState<Record<number, string>>({});
 
   function loadDept() {
-    api<{ departments: Dept[] }>(`/api/reports/by-department?year=${year}&month=${month}&currency=KGS&_t=${Date.now()}`)
+    api<{ departments: Dept[] }>(`/api/reports/by-department?year=${year}&month=${month}&currency=${display}&_t=${Date.now()}`)
       .then((d) => setDept(d.departments.find((x) => x.id === deptId) || null))
       .catch((e) => toast.show("error", e.message));
   }
@@ -99,6 +103,7 @@ export default function DepartmentDetail() {
       .catch(() => {});
   }, [personal]);
   useEffect(() => { loadDept(); loadOps(); }, [deptId, year, month, catNames]);
+  useEffect(() => { loadDept(); }, [display]);
 
   function setPeriod(patch: { year?: number; month?: number }) {
     const next = new URLSearchParams(sp);
@@ -134,8 +139,15 @@ export default function DepartmentDetail() {
       .map((o) => [o.category_id as number, o.category_name || "—"])).entries(),
   ).sort((a, b) => a[1].localeCompare(b[1], "ru"));
   const expenseOps = catId === "" ? allExpenseOps : allExpenseOps.filter((o) => o.category_id === catId);
-  const expenseFilteredSum = expenseOps.reduce((s, o) => s + Number(o.amount), 0);
-  const sym = "с";
+  // Строки операций — в родной валюте записи, поэтому итог по категории считаем
+  // отдельно по каждой валюте, а не складываем рубли с сомами под значком «с».
+  const expenseFilteredByCur = expenseOps.reduce<Record<string, number>>((acc, o) => {
+    acc[o.currency] = (acc[o.currency] || 0) + Number(o.amount);
+    return acc;
+  }, {});
+  const expenseFilteredText = Object.entries(expenseFilteredByCur)
+    .map(([cur, v]) => `${fmt(v)} ${currencySymbol(cur)}`).join(" + ");
+  const sym = currencySymbol(display);
 
   function Card({ k, title, value, color }: { k: string; title: string; value: number; color: string }) {
     const isOpen = open === k;
@@ -191,7 +203,7 @@ export default function DepartmentDetail() {
           <div className="row between" style={{ marginBottom: 8, flexWrap: "wrap", gap: 8 }}>
             <span style={{ fontWeight: 600 }}>Расходы{catId !== "" ? " — фильтр по категории" : ""}</span>
             {catId !== "" && (
-              <span className="muted">Итого по категории: <b style={{ color: "var(--danger)" }}>{fmt(expenseFilteredSum)} {sym}</b> · {expenseOps.length} опер.</span>
+              <span className="muted">Итого по категории: <b style={{ color: "var(--danger)" }}>{expenseFilteredText}</b> · {expenseOps.length} опер.</span>
             )}
           </div>
           {ops === null ? <div className="muted">Загрузка...</div> : expenseOps.length === 0 ? <div className="muted">Нет расходов</div> : (
@@ -208,7 +220,7 @@ export default function DepartmentDetail() {
                       <td>{new Date(op.date).toLocaleDateString("ru-RU")}</td>
                       <td>{op.category_name || "—"}</td>
                       <td>{op.who || "—"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--danger)" }}>−{fmt(op.amount)} {op.currency === "KGS" ? sym : op.currency}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600, color: "var(--danger)" }}>−{fmt(op.amount)} {currencySymbol(op.currency)}</td>
                       <td style={{ maxWidth: 220 }}>{op.description || "—"}</td>
                       <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                         {op.expense_type !== "transfer" && (
@@ -287,7 +299,7 @@ function OpsTable({ ops, sym }: { ops: Op[]; sym: string }) {
               <td>{op.kind === "topup" ? "Выдача" : "Приход"}</td>
               <td>{op.category_name || op.source || "—"}</td>
               <td>{op.who || "—"}</td>
-              <td style={{ textAlign: "right", fontWeight: 600, color: "var(--success)" }}>+{fmt(op.amount)} {op.currency === "KGS" ? sym : op.currency}</td>
+              <td style={{ textAlign: "right", fontWeight: 600, color: "var(--success)" }}>+{fmt(op.amount)} {currencySymbol(op.currency)}</td>
               <td style={{ maxWidth: 220 }}>{op.description || "—"}</td>
             </tr>
           ))}

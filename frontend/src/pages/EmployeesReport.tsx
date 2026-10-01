@@ -5,6 +5,7 @@ import { useToast } from "../components/Toast";
 import { useDisplayCurrency, currencySymbol, currencyLabel } from "../context/CurrencyContext";
 import { listDepartments, type Department } from "../api/departments";
 import EmployeeDetailRows from "./EmployeeDetailRows";
+import { dayStart, nextDayStart, monthStart } from "../lib/dayRange";
 
 interface EmployeeRow {
   user_id: number;
@@ -68,11 +69,11 @@ export default function EmployeesReport() {
     if (!details[uid]) {
       let from: string, to: string;
       if (mode === "range" && dateFrom && dateTo) {
-        from = new Date(dateFrom + "T00:00:00").toISOString();
-        to = new Date(new Date(dateTo + "T00:00:00").getTime() + 86400000).toISOString();  // конец дня «по» (exclusive)
+        from = dayStart(dateFrom);
+        to = nextDayStart(dateTo);  // конец дня «по» (exclusive)
       } else {
-        from = new Date(year, month - 1, 1).toISOString();
-        to = new Date(year, month, 1).toISOString();  // первый день след. месяца (exclusive)
+        from = monthStart(year, month);
+        to = monthStart(year, month + 1);  // первый день след. месяца (exclusive)
       }
       api<any>(`/api/users/${uid}/balance?date_from=${from}&date_to=${to}`)
         .then((d) => setDetails((prev) => ({ ...prev, [uid]: d.entries || [] })))

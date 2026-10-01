@@ -12,6 +12,7 @@ import { NewExpenseForm } from "../components/NewExpenseForm";
 import { EditExpenseModal } from "../components/EditExpenseModal";
 import { ExpenseDetailModal } from "../components/ExpenseDetailModal";
 import { IncomeModal } from "./Dashboard";
+import { dayStart, nextDayStart } from "../lib/dayRange";
 
 type FeedRow =
   | { kind: "expense"; date: string; data: any }
@@ -48,12 +49,10 @@ export default function Expenses() {
     if (filter.status) q.set("status", filter.status);
     if (filter.employee_id) q.set("employee_id", filter.employee_id);
     if (filter.category_id) q.set("category_id", filter.category_id);
-    if (filter.date_from) q.set("date_from", new Date(filter.date_from).toISOString());
+    if (filter.date_from) q.set("date_from", dayStart(filter.date_from));
     if (filter.date_to) {
       // включаем сам день "по": до конца дня (00:00 следующего)
-      const d = new Date(filter.date_to);
-      d.setDate(d.getDate() + 1);
-      q.set("date_to", d.toISOString());
+      q.set("date_to", nextDayStart(filter.date_to));
     }
     return q.toString();
   }

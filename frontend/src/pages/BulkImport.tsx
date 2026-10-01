@@ -20,6 +20,7 @@ import { listIncomeSources, type IncomeSource } from "../api/incomeSources";
 import { EditExpenseModal } from "../components/EditExpenseModal";
 import { EditIncomeModal } from "../components/EditIncomeModal";
 import { EditTopUpModal } from "../components/EditTopUpModal";
+import { dayStart } from "../lib/dayRange";
 
 type Op = "expense" | "income" | "topup";
 
@@ -800,8 +801,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
     const amtMax = parseFloat(norm(amountMax));
     if (isFinite(amtMin) && amtMin > 0) qs.set("amount_min", String(amtMin));
     if (isFinite(amtMax) && amtMax > 0) qs.set("amount_max", String(amtMax));
-    if (dateFrom) qs.set("date_from", new Date(dateFrom).toISOString());
-    if (dateTo) qs.set("date_to", new Date(dateTo).toISOString());
+    if (dateFrom) qs.set("date_from", dayStart(dateFrom));
+    if (dateTo) qs.set("date_to", dayStart(dateTo));  // сервер сам добавляет сутки (включительно)
     return qs;
   }, [employeeId, categoryId, departmentId, kind, paymentMethod, amountMin, amountMax, dateFrom, dateTo]);
 
@@ -859,8 +860,8 @@ function RecentOperations({ reloadKey, colleagues, categories, departments }: { 
       const amtMax = parseFloat(norm(amountMax));
       if (isFinite(amtMin) && amtMin > 0) qs.set("amount_min", String(amtMin));
       if (isFinite(amtMax) && amtMax > 0) qs.set("amount_max", String(amtMax));
-      if (dateFrom) qs.set("date_from", new Date(dateFrom).toISOString());
-      if (dateTo) qs.set("date_to", new Date(dateTo).toISOString());
+      if (dateFrom) qs.set("date_from", dayStart(dateFrom));
+      if (dateTo) qs.set("date_to", dayStart(dateTo));  // сервер сам добавляет сутки (включительно)
 
       setOps(null);
       setErr(null);

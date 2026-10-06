@@ -17,7 +17,7 @@ import MyDashboard from "./pages/MyDashboard";
 import MySubordinates from "./pages/MySubordinates";
 import Employees from "./pages/Employees";
 import EmployeeCard from "./pages/EmployeeCard";
-import EmployeeChain from "./pages/EmployeeChain";
+import ChainReport from "./pages/ChainReport";
 import EmployeeSpec from "./pages/EmployeeSpec";
 import NewAdvance from "./pages/Advances";
 import Expenses from "./pages/Expenses";
@@ -128,7 +128,7 @@ function RoleRoutes() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/employees" element={<Employees />} />
         <Route path="/employees/:id" element={<EmployeeCard />} />
-        <Route path="/employees/:id/chain" element={<EmployeeChain />} />
+        <Route path="/employees/:id/chain" element={<ChainReport />} />
         <Route path="/employees/:id/spec" element={<EmployeeSpec />} />
         <Route path="/advances/new" element={<NewAdvance />} />
         <Route path="/expenses" element={<Expenses />} />
@@ -142,6 +142,7 @@ function RoleRoutes() {
         <Route path="/reports/employees" element={<EmployeesReport />} />
         <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
         <Route path="/reports/departments" element={<ReportsDepartments />} />
+        <Route path="/reports/chain" element={<ChainReport />} />
         <Route path="/reports/departments/:id" element={<DepartmentDetail />} />
         <Route path="/reports/balance" element={<BalanceReport />} />
         <Route path="/reports/incomes" element={<IncomeReport />} />
@@ -189,7 +190,8 @@ function RoleRoutes() {
       <Route path="/reports/employees/:id" element={<EmployeeProfile />} />
       <Route path="/expenses/new" element={<NewExpense />} />
       <Route path="/my-subordinates" element={<MySubordinates />} />
-      <Route path="/employees/:id/chain" element={<EmployeeChain />} />
+      <Route path="/reports/chain" element={<ChainReport />} />
+      <Route path="/employees/:id/chain" element={<ChainReport />} />
       <Route path="/requests" element={<Requests />} />
       <Route path="/requests/recurring" element={<RecurringObligations />} />
       <Route path="/requests/new" element={<RequestNew />} />

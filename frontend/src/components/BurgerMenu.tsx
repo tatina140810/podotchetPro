@@ -58,6 +58,7 @@ export function BurgerMenu() {
         { to: "/", label: "Отчёт по категориям" },
         { to: "/reports/employees", label: "Отчёт по сотрудникам" },
         { to: "/reports/departments", label: "Отчёт по подразделениям" },
+        { to: "/reports/chain", label: "Цепочка расходов" },
         // «Приходы» — только admin/superadmin и gen_director (НЕ аудитору)
         ...(user.role !== "auditor" ? [{ to: "/reports/incomes", label: "Приходы" }] : []),
         { to: "/requests", label: "Заявки" },
@@ -120,6 +121,7 @@ export function BurgerMenu() {
         { to: "/requests", label: "Заявки" },
         { to: "/requests/recurring", label: "Регулярные обязательства" },
         { to: "/my-subordinates", label: "Мои подотчётные" },
+        { to: "/reports/chain", label: "Цепочка расходов" },
       ];
 
   return (

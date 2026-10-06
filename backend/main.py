@@ -27,6 +27,7 @@ from routers import (
     push,
     recurring_obligations,
     reports,
+    reports_chain,
     requests as requests_router,
     requests_simple as requests_simple_router,
     requests_report as requests_report_router,
@@ -77,6 +78,7 @@ app.include_router(employees.router)
 app.include_router(advances.router)
 app.include_router(expenses.router)
 app.include_router(reports.router)
+app.include_router(reports_chain.router)
 app.include_router(dashboard.router)
 app.include_router(chat.router)
 # Упрощённые заявки — РАНЬШЕ основного роутера: /api/requests/config иначе съел бы /{request_id}.

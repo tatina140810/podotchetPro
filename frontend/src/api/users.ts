@@ -49,39 +49,6 @@ export function getUserBalance(userId: number): Promise<UserBalanceDetails> {
   return api<UserBalanceDetails>(`/api/users/${userId}/balance`);
 }
 
-// ===================== Expense chain =====================
-
-export interface ChainExpense {
-  id: number;
-  amount: string;
-  category_name: string | null;
-  description: string | null;
-  status: "pending" | "approved" | "rejected";
-  spent_at: string;
-}
-
-export interface ChainTransfer {
-  id: number;
-  amount: string;
-  to_user_id: number;
-  to_user_name: string;
-  note: string | null;
-  created_at: string;
-  child: ChainNode | null;
-}
-
-export interface ChainNode {
-  user_id: number;
-  user_name: string;
-  current_balance: string;
-  expenses: ChainExpense[];
-  transfers_out: ChainTransfer[];
-}
-
-export function getExpenseChain(userId: number): Promise<ChainNode> {
-  return api<ChainNode>(`/api/users/${userId}/expense-chain`);
-}
-
 export function createUser(payload: {
   name: string;
   phone: string;

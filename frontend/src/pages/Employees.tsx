@@ -252,7 +252,7 @@ function TopUpModal({
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 400, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2">Выдать → {target.name}</h2>
         <div className="muted" style={{ fontSize: 12, marginBottom: 12 }}>
           Текущий баланс: {Number(target.current_balance).toLocaleString("ru-RU")} с
@@ -404,7 +404,7 @@ function AddEmployeeModal({
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2">Новый сотрудник</h2>
         <form onSubmit={submit} className="grid">
           <div><label>Имя</label><input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required minLength={2} /></div>

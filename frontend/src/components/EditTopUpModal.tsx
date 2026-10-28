@@ -71,7 +71,7 @@ export function EditTopUpModal({ topup, onClose, onSaved }: Props) {
       display: "flex", alignItems: "flex-start", justifyContent: "center",
       padding: "5vh 16px", overflowY: "auto",
     }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2">Изменить выдачу</h2>
         <form onSubmit={submit} className="grid">
           <div className="row" style={{ gap: 8 }}>

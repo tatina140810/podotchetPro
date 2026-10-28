@@ -143,7 +143,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
       display: "flex", alignItems: "flex-start", justifyContent: "center",
       padding: "5vh 16px", overflowY: "auto",
     }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2">Изменить расход</h2>
         <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
           При смене суммы или валюты КГС-эквивалент пересчитается по текущему курсу.

@@ -549,7 +549,7 @@ export default function BulkImport() {
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
         }}>
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: "100%" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 460, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
             <h2 className="h2">Подтвердите импорт</h2>
             <div style={{ marginBottom: 12 }}>
               Будет создано:

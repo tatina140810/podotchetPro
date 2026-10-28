@@ -24,7 +24,7 @@ export function UpgradeModal({ onClose, message }: { onClose: () => void; messag
         display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
       }}
     >
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2">Лимит плана Free</h2>
         <p className="muted" style={{ fontSize: 14, lineHeight: 1.5 }}>
           {message ||

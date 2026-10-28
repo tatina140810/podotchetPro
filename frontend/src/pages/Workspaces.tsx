@@ -142,7 +142,7 @@ function CreateModal({ onClose, onCreated }: { onClose: () => void; onCreated: (
         display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
       }}
     >
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 480, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 style={{ marginTop: 0 }}>Новое пространство</h2>
         <label className="muted" style={{ fontSize: 13 }}>Название</label>
         <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Например: Объект на Чуй" />

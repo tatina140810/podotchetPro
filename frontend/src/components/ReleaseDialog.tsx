@@ -42,7 +42,7 @@ export default function ReleaseDialog({ rows, handler, onClose, onDone }: {
   return (
     <div onClick={onClose}
       style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.55)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480 }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "100%", maxWidth: 480, maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2" style={{ marginTop: 0 }}>Выдача: {handler}</h2>
         <div className="muted" style={{ marginBottom: 10, fontSize: 13 }}>
           Одобренных строк ждёт выпуска: {rows.length} на {Object.entries(byCur).map(([c, v]) => `${v.toLocaleString("ru-RU")} ${c === "KGS" ? "с" : c}`).join(" + ")}.

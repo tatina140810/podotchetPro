@@ -107,7 +107,7 @@ export default function IncomeSources() {
           position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 2000,
           display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
         }}>
-          <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 420, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
             <h2 className="h2">Новый источник</h2>
             <form onSubmit={(e) => { e.preventDefault(); save(); }} className="grid">
               <div>

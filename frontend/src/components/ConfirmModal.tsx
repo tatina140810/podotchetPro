@@ -30,7 +30,7 @@ export function ConfirmModal({ title, rows, message, confirmLabel = "Удали�
       position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 2100,
       display: "flex", alignItems: "center", justifyContent: "center", padding: 16,
     }}>
-      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
         <h2 className="h2" style={{ marginTop: 0, marginBottom: 10 }}>{title}</h2>
         {message && <div style={{ marginBottom: 12, fontSize: 14 }}>{message}</div>}
         <div className="grid" style={{ gap: 6, marginBottom: 16 }}>

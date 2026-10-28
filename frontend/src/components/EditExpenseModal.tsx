@@ -5,6 +5,7 @@ import { useToast } from "./Toast";
 import { listDepartments, type Department } from "../api/departments";
 import { listColleagues } from "../api/users";
 import { useAuth, type UserOut } from "../context/AuthContext";
+import { ExpenseTypeSwitch, type ExpenseKind } from "./ExpenseTypeSwitch";
 
 interface Category { id: number; name: string }
 interface Receipt { id: number; file_url: string; file_name?: string | null }
@@ -53,6 +54,9 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     spent_at: expense.spent_at ? expense.spent_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
   });
   const [busy, setBusy] = useState(false);
+  // Перевод в выдачу — тем же ролям, что меняют сотрудника (аудитор и выше).
+  const [kind, setKind] = useState<ExpenseKind>("expense");
+  const [issuerId, setIssuerId] = useState(me?.id != null ? String(me.id) : "");
   const [receipts, setReceipts] = useState<Receipt[]>([]);
   const [uploading, setUploading] = useState(false);
   const [progress, setProgress] = useState("");
@@ -112,6 +116,7 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     e.preventDefault();
     const amt = parseFloat(form.amount.replace(",", "."));
     if (!isFinite(amt) || amt <= 0) { toast.show("error", "Сумма > 0"); return; }
+    if (kind === "topup") { await convertToTopup(amt); return; }
     setBusy(true);
     try {
       const body: any = {
@@ -135,6 +140,30 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
     } finally { setBusy(false); }
   }
 
+  async function convertToTopup(amt: number) {
+    if (!issuerId) { toast.show("error", "Укажите, кто выдал"); return; }
+    setBusy(true);
+    try {
+      const body: any = {
+        issued_by_id: Number(issuerId),
+        user_id: employeeId ? Number(employeeId) : undefined,
+        amount: amt,
+        currency: form.currency,
+        payment_method: form.payment_method || null,
+        note: form.description.trim() || null,
+        date: new Date(form.spent_at).toISOString(),
+      };
+      if (departmentId) body.department_id = Number(departmentId);
+      const res = await api<{ topup_id: number; sheets_note: string | null }>(
+        `/api/expenses/${expense.id}/convert-to-topup`, { method: "POST", body });
+      toast.show("success", "Расход переведён в выдачу");
+      if (res.sheets_note) toast.show("info", res.sheets_note);
+      onSaved();
+    } catch (e: any) {
+      toast.show("error", e.message);
+    } finally { setBusy(false); }
+  }
+
   // Портал в body: иначе окно живёт в стекинг-контексте страницы
   // (панель импорта, шапка) и прячется под ними.
   return createPortal(
@@ -144,11 +173,15 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
       padding: "5vh 16px", overflowY: "auto",
     }}>
       <div className="card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 440, width: "100%", maxHeight: "90vh", overflow: "auto" }}>
-        <h2 className="h2">Изменить расход</h2>
+        <h2 className="h2">{kind === "topup" ? "Перевести расход в выдачу" : "Изменить расход"}</h2>
         <div className="muted" style={{ fontSize: 11, marginBottom: 10 }}>
           При смене суммы или валюты КГС-эквивалент пересчитается по текущему курсу.
         </div>
         <form onSubmit={submit} className="grid">
+          {canEditEmployee && (
+            <ExpenseTypeSwitch kind={kind} onKind={setKind} issuerId={issuerId}
+              onIssuer={setIssuerId} colleagues={colleagues} />
+          )}
           <div className="row" style={{ gap: 8 }}>
             <div style={{ flex: 2 }}>
               <label>Сумма</label>
@@ -164,16 +197,16 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
               </select>
             </div>
           </div>
-          <div>
+          {kind === "expense" && <div>
             <label>Категория</label>
             <select value={form.category_id} onChange={(e) => setForm({ ...form, category_id: e.target.value })}>
               <option value="">— нет —</option>
               {categories.map((c: any) => <option key={c.id} value={c.id}>{c.display_name || c.name}</option>)}
             </select>
-          </div>
+          </div>}
           {canEditEmployee && (
             <div>
-              <label>Сотрудник</label>
+              <label>{kind === "topup" ? "Кому выдали" : "Сотрудник"}</label>
               <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)}>
                 {/* Пока список коллег не загрузился (или сотрудника в нём нет —
                     например, он деактивирован), держим текущего: иначе select
@@ -185,9 +218,9 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
                 )}
                 {colleagues.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
               </select>
-              <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+              {kind === "expense" && <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
                 Расход перейдёт на выбранного сотрудника — изменятся балансы обоих.
-              </div>
+              </div>}
             </div>
           )}
           <div>
@@ -216,10 +249,10 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
             <input type="date" value={form.spent_at} onChange={(e) => setForm({ ...form, spent_at: e.target.value })} />
           </div>
           <div>
-            <label>Описание</label>
+            <label>{kind === "topup" ? "Комментарий к выдаче" : "Описание"}</label>
             <textarea rows={2} value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </div>
-          <div>
+          {kind === "expense" && <div>
             <label>Чеки / документы</label>
             {receipts.length > 0 && (
               <div className="grid" style={{ gap: 4, marginBottom: 6 }}>
@@ -237,10 +270,10 @@ export function EditExpenseModal({ expense, onClose, onSaved }: Props) {
               {uploading ? (progress ? `загружаю ${progress}...` : "загружаю...") : "+ прикрепить чеки/документы"}
               <input type="file" multiple accept="image/*,application/pdf,.xls,.xlsx,.doc,.docx,.csv" style={{ display: "none" }} onChange={onReceiptFile} disabled={uploading} />
             </label>
-          </div>
+          </div>}
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <button type="button" className="ghost" onClick={onClose}>Отмена</button>
-            <button type="submit" disabled={busy}>{busy ? "..." : "Сохранить"}</button>
+            <button type="submit" disabled={busy}>{busy ? "..." : kind === "topup" ? "Перевести в выдачу" : "Сохранить"}</button>
           </div>
         </form>
       </div>

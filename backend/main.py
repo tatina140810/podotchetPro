@@ -20,6 +20,7 @@ from routers import (
     exchange_rates,
     expected_incomes,
     expenses,
+    expense_convert,
     income,
     income_sources,
     notifications,
@@ -77,6 +78,7 @@ app.include_router(departments.router)
 app.include_router(employees.router)
 app.include_router(advances.router)
 app.include_router(expenses.router)
+app.include_router(expense_convert.router)
 app.include_router(reports.router)
 app.include_router(reports_chain.router)
 app.include_router(dashboard.router)
